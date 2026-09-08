@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 const CLI_PATH = join(process.cwd(), "build/server/agents/verify/main.js");
-const SUPERVISOR_PATH = join(process.cwd(), "build/server/agents/verify/supervisor.js");
+const SUPERVISOR_PATH = join(process.cwd(), "build/server/agents/verify/step-runner.js");
 
 interface CommandResult {
   readonly exitCode: number;
@@ -142,7 +142,7 @@ async function createFixture(): Promise<string> {
   );
 
   await writePath(repo, "build/sentinel.txt", "keep me\n");
-  const fixtureSupervisor = join(repo, "build/server/agents/verify/supervisor.js");
+  const fixtureSupervisor = join(repo, "build/server/agents/verify/step-runner.js");
   await mkdir(dirname(fixtureSupervisor), { recursive: true });
   await copyFile(SUPERVISOR_PATH, fixtureSupervisor);
   return repo;

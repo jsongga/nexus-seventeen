@@ -15,7 +15,7 @@ import {
 } from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";
 import { mapClaimContext as mapSharedClaimContext } from "../../shared/claim-context.js";
-import { parseTaskWakeClaim } from "./schema.js";
+import { parseTaskWakeClaim } from "./claim-parsers.js";
 import { POISONED_CLAIM_REASON, TASK_BOARD_PAUSED_CLAIM, TaskBoardClaimResponseError } from "./types.js";
 import type {
   AgentTaskPhase,

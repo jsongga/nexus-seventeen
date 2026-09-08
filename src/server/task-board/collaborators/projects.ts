@@ -67,7 +67,7 @@ import { PENDING_LIVE_WAKEUP_PREDICATE_SQL } from "../persistence/workflow.js";
 import { exactNow } from "../persistence/timestamps.js";
 import { RETIRED_WAKEUP_EVENT_PREFIX } from "../persistence/workflow.js";
 import type { AutomationCollaborator } from "./automation.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { NotificationsCollaborator } from "./notifications.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
@@ -84,7 +84,7 @@ import {
   mergePipelineBranch,
   resolvePipelineBranchTip,
   type MergePipelineResult,
-} from "./merge-executor.js";
+} from "./pipeline-merge.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import {
   decompositionFamilyTouchesProjectSql,

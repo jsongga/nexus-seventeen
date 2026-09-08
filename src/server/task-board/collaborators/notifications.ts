@@ -4,7 +4,7 @@ import { parseBoardNotification } from "#shared/task-board-contract/validate";
 import { conflict, TaskBoardError } from "../errors.js";
 import { numberValue, type Row } from "../persistence/rows.js";
 import { exactIsoTimestamp, exactNow } from "../persistence/timestamps.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 
 export interface NotificationDeliveryAdapter {
   deliver(notification: BoardNotification): void;

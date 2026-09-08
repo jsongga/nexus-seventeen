@@ -9,7 +9,7 @@ import type { StageHandoffDraft, WorkflowPlanDraft } from "#shared/task-board-co
 import { AutomationCollaborator } from "#server/task-board/collaborators/automation";
 import { ProjectsCollaborator } from "#server/task-board/collaborators/projects";
 import { RunsCollaborator } from "#server/task-board/collaborators/runs";
-import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/board-runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
 import { registerParentTerminationCascade } from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";

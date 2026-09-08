@@ -85,7 +85,7 @@ import {
 import { ParkLifecycleCollaborator, type ParkLifecycleSweepResult } from "./collaborators/park-lifecycle.js";
 import { ProjectsCollaborator, type PipelineMergeExecutor } from "./collaborators/projects.js";
 import { RunsCollaborator, type SettlementActor, type SuspendAllActiveRunsResult } from "./collaborators/runs.js";
-import { TaskBoardRuntime, type Actor } from "./collaborators/runtime.js";
+import { TaskBoardRuntime, type Actor } from "./collaborators/board-runtime.js";
 import type { GitRunner } from "../shared/git.js";
 import { TasksCollaborator } from "./collaborators/tasks.js";
 import { WallClockCollaborator, type WallClockSweepResult } from "./collaborators/wall-clock.js";

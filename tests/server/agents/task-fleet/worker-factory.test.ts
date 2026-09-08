@@ -17,7 +17,7 @@ import {
   classifyTaskFleetError,
   createTaskFleetWorker,
   isTransientTaskFleetError,
-} from "#server/agents/task-fleet/runtime";
+} from "#server/agents/task-fleet/worker-factory";
 import { tempRoot } from "../task-worker/helpers.js";
 import { SHIPPED_RUNTIME_PROFILES } from "../runtime/profile-fixtures.js";
 

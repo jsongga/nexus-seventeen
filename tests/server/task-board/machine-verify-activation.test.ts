@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { AutomationCollaborator } from "#server/task-board/collaborators/automation";
 import { ProjectsCollaborator } from "#server/task-board/collaborators/projects";
-import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/board-runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
 import { registerParentTerminationCascade } from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";

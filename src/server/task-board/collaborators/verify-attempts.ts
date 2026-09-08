@@ -15,7 +15,7 @@ import { redactForPersistence } from "../../shared/redact.js";
 import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { MachineVerifyEvidence } from "../persistence/workflow.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 import { BoardPauseCollaborator } from "./board-pause.js";
 
 /* —— Process bounds and retirement signals —— */
@@ -24,7 +24,7 @@ const CHECK_TIMEOUT_MS = 120_000;
 const CHECK_MAX_BYTES = 1024 * 1024;
 const TAIL_BYTES = 4_096;
 const START_FAILURE_MARKER = /\[machine-verify-start-failures:(\d+)\]/u;
-export const DEFAULT_SUPERVISOR_PATH = fileURLToPath(new URL("../../agents/verify/supervisor.js", import.meta.url));
+export const DEFAULT_SUPERVISOR_PATH = fileURLToPath(new URL("../../agents/verify/step-runner.js", import.meta.url));
 
 type Row = Record<string, unknown>;
 type OpenAttemptState = "starting" | "running" | "failed_to_start";

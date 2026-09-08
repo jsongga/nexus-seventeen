@@ -5,7 +5,7 @@ export {
   classifyTaskFleetError,
   createTaskFleetWorker,
   isTransientTaskFleetError,
-} from "./runtime.js";
+} from "./worker-factory.js";
 export type {
   ManagedTaskWorker,
   TaskFleetAgentConfig,

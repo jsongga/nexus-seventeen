@@ -1,6 +1,6 @@
 import type { BoardTask, TaskMessage } from "#shared/task-board-contract";
 import { messageFromRow } from "../persistence/rows.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 
 export interface ClaimTaskProjectionInputs {
   readonly task: BoardTask;

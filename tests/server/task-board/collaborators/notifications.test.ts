@@ -3,7 +3,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { TaskBoard, TaskBoardError, normalizeTaskBoardConfig } from "#server/task-board";
 import { NotificationsCollaborator } from "#server/task-board/collaborators/notifications";
-import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/board-runtime";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { HUMAN_TOKEN, config, databasePath } from "../helpers.js";
 

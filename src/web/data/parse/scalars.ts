@@ -45,7 +45,7 @@ export const withoutApiVersion = <T extends { apiVersion: unknown }>(item: T): O
   return value;
 };
 
-export function record(value: unknown, path: string): JsonRecord {
+export function parseRecord(value: unknown, path: string): JsonRecord {
   return contractRecord(value, path);
 }
 
@@ -53,7 +53,7 @@ export function exactRecord(value: unknown, path: string, fields: readonly strin
   return exact(value, fields, path, { messages: PATH_EXACT_MESSAGES });
 }
 
-export function string(value: unknown, path: string): string {
+export function parseString(value: unknown, path: string): string {
   return stringValue(value, path);
 }
 
@@ -70,7 +70,7 @@ export function integer(value: unknown, path: string, minimum = 0): number {
   return contractInteger(value, path, minimum);
 }
 
-export function array<T>(value: unknown, path: string, parse: (item: unknown, path: string) => T): T[] {
+export function parseArray<T>(value: unknown, path: string, parse: (item: unknown, path: string) => T): T[] {
   return arrayOf(value, path, parse);
 }
 
@@ -82,7 +82,7 @@ export function skillIdentifier(value: unknown, path: string): string {
   return contractSkillIdentifier(value, path, BROWSER_SCALAR_MESSAGES);
 }
 
-export function boolean(value: unknown, path: string): boolean {
+export function parseBoolean(value: unknown, path: string): boolean {
   return booleanValue(value, path);
 }
 

@@ -6,7 +6,6 @@ src/server/agents/runtime/codex.ts
 src/server/agents/runtime/derive.ts
 src/server/agents/runtime/profiles.ts
 src/server/agents/runtime/registry.ts
-src/server/agents/task-container/arguments.ts
 src/server/agents/task-container/container-launcher.ts
 src/server/agents/task-container/image-tag.ts
 src/server/agents/task-container/index.ts
@@ -15,7 +14,6 @@ src/server/agents/task-fleet/config.ts
 src/server/agents/task-fleet/fleet.ts
 src/server/agents/task-fleet/index.ts
 src/server/agents/task-fleet/main.ts
-src/server/agents/task-fleet/runtime.ts
 src/server/agents/task-fleet/types.ts
 src/server/agents/task-worker/contained-cli-launcher.ts
 src/server/agents/task-worker/http-board-client.ts
@@ -23,7 +21,6 @@ src/server/agents/task-worker/index.ts
 src/server/agents/task-worker/journal.ts
 src/server/agents/task-worker/main.ts
 src/server/agents/task-worker/prompt-registry.ts
-src/server/agents/task-worker/schema.ts
 src/server/agents/task-worker/types.ts
 src/server/agents/task-worker/worker.ts
 src/server/agents/task-workspace/index.ts
@@ -34,7 +31,6 @@ src/server/agents/verify/index.ts
 src/server/agents/verify/main.ts
 src/server/agents/verify/mapping.ts
 src/server/agents/verify/runner.ts
-src/server/agents/verify/supervisor.ts
 src/server/docs-publish/banner.ts
 src/server/docs-publish/client.ts
 src/server/docs-publish/config.ts
@@ -57,7 +53,6 @@ src/server/task-board/collaborators/claim-projection.ts
 src/server/task-board/collaborators/decomposition-readiness.ts
 src/server/task-board/collaborators/interface-context.ts
 src/server/task-board/collaborators/ledgers.ts
-src/server/task-board/collaborators/merge-executor.ts
 src/server/task-board/collaborators/messages.ts
 src/server/task-board/collaborators/notifications.ts
 src/server/task-board/collaborators/onboarding-check.ts

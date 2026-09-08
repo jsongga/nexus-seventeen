@@ -1,3 +1,5 @@
+/** Parses worker claims, agent outcomes, and persisted task-worker journals. */
+
 import {
   exact,
   identifier,

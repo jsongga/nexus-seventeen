@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import {
   TASK_BOARD_API_VERSION,
   TASK_BOARD_ERROR_CODES,
+  TASK_WORKER_OUTPUT_ID_PREFIX,
   WORK_ITEM_PHASES,
   isHardTerminalTaskStatus,
   isRecoverableTaskStatus,
@@ -75,7 +76,7 @@ import {
 import { PUBLISHED_INTERFACE_PATH, readPublishedInterface } from "./interface-context.js";
 import { onboardingDeliverablesCheck } from "./onboarding-check.js";
 import type { ProjectsCollaborator } from "./projects.js";
-import type { Actor, TaskBoardRuntime } from "./runtime.js";
+import type { Actor, TaskBoardRuntime } from "./board-runtime.js";
 
 class MigrateInterfaceClaimError extends Error {
   constructor(
@@ -1398,7 +1399,7 @@ export class RunsCollaborator {
           `
         SELECT message_id
         FROM task_messages
-        WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB 'twe_*'
+        WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB '${TASK_WORKER_OUTPUT_ID_PREFIX}*'
       `
         )
         .all(current.runId, agentId) as ReadonlyArray<Record<string, unknown>>;
@@ -1417,7 +1418,7 @@ export class RunsCollaborator {
         .prepare(
           `
         DELETE FROM task_messages
-        WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB 'twe_*'
+        WHERE run_id=? AND actor_type='agent' AND actor_id=? AND client_event_id GLOB '${TASK_WORKER_OUTPUT_ID_PREFIX}*'
       `
         )
         .run(current.runId, agentId);

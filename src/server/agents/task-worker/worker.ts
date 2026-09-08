@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import type { AgentRole } from "#shared/task-board-contract";
+import {
+  TASK_WORKER_ACTIVITY_ID_PREFIX,
+  TASK_WORKER_OUTPUT_ID_PREFIX,
+  TASK_WORKER_SETTLEMENT_ID_PREFIX,
+  type AgentRole,
+} from "#shared/task-board-contract";
 import { safeErrorDetail } from "../../shared/redact.js";
 import { RuntimeCapabilityError } from "../runtime/profiles.js";
 import {
@@ -16,7 +21,7 @@ import {
 import type { RuntimeEvent } from "../runtime/adapter.js";
 import { TaskWorkerJournalStore } from "./journal.js";
 import { InactiveClaimReplayError, RetryableSettlementError } from "./http-board-client.js";
-import { parseAgentRunOutcome, parseBoundedAgentContext, parseTaskWakeClaim } from "./schema.js";
+import { parseAgentRunOutcome, parseBoundedAgentContext, parseTaskWakeClaim } from "./claim-parsers.js";
 import {
   POISONED_CLAIM_REASON,
   TASK_WAKE_REASONS,
@@ -144,7 +149,7 @@ function outputIdempotency(claim: TaskWakeClaim, index: number, output: AgentRun
       })
     )
     .digest("hex");
-  return `twe_${digest}`;
+  return `${TASK_WORKER_OUTPUT_ID_PREFIX}${digest}`;
 }
 
 function activityIdempotency(claim: TaskWakeClaim, sequence: number, body: string): string {
@@ -160,7 +165,7 @@ function activityIdempotency(claim: TaskWakeClaim, sequence: number, body: strin
       })
     )
     .digest("hex");
-  return `twa_${digest}`;
+  return `${TASK_WORKER_ACTIVITY_ID_PREFIX}${digest}`;
 }
 
 function settlementIdempotency(claim: TaskWakeClaim, outcome: AgentRunOutcome, result: string): string {
@@ -177,7 +182,7 @@ function settlementIdempotency(claim: TaskWakeClaim, outcome: AgentRunOutcome, r
       })
     )
     .digest("hex");
-  return `tws_${digest}`;
+  return `${TASK_WORKER_SETTLEMENT_ID_PREFIX}${digest}`;
 }
 
 function requestedCursor(messageCursors: Readonly<Record<string, number>>, taskId: string | null): number | null {

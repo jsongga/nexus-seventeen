@@ -33,7 +33,7 @@ function serviceOptions(homeDir?: string, projectRoots?: readonly string[], data
     humanToken: HUMAN_TOKEN,
     humanPrincipal: "human:alice",
     port: 0,
-    host: homeDir === undefined ? undefined : { homeDir, projectRoots },
+    hostPaths: homeDir === undefined ? undefined : { homeDir, projectRoots },
   };
 }
 

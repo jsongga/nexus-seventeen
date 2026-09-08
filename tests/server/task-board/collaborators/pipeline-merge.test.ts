@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { mergePipelineBranch, runMergeGit } from "#server/task-board/collaborators/merge-executor";
+import { mergePipelineBranch, runMergeGit } from "#server/task-board/collaborators/pipeline-merge";
 
 function git(repo: string, ...arguments_: string[]): string {
   return execFileSync("git", ["-C", repo, ...arguments_], {

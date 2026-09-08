@@ -15,7 +15,7 @@ import {
   type WorkflowPlanDraft,
 } from "#shared/task-board-contract";
 import { createTaskBoardService, SkillRegistry, TaskBoard } from "#server/task-board";
-import { mergePipelineBranch } from "#server/task-board/collaborators/merge-executor";
+import { mergePipelineBranch } from "#server/task-board/collaborators/pipeline-merge";
 import {
   registerParentTerminationCascade,
   registerWorkItemTransitionStore,

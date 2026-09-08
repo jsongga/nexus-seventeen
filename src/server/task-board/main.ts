@@ -32,7 +32,7 @@ const service = await createTaskBoardService({
   stageCapSeconds: optionalInteger("STEWARD_TASK_BOARD_STAGE_CAP_SECONDS", 3_600),
   taskCapSeconds: optionalInteger("STEWARD_TASK_BOARD_TASK_CAP_SECONDS", 10_800),
   verifyWorkspaceRoot: process.env.STEWARD_TASK_BOARD_VERIFY_WORKSPACE_ROOT,
-  host:
+  hostPaths:
     projectRootsRaw === undefined
       ? undefined
       : {

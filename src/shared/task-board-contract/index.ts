@@ -63,6 +63,9 @@ export const MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS = 768_000;
 export const MAX_AREA_MEMORY_RESULT_CHARACTERS = 1_000;
 export const MAX_AGENT_CONTEXT_BYTES = 256 * 1_024;
 export const MAX_DESIGN_CONTEXT_BYTES = 4 * 1_024 * 1_024;
+export const TASK_WORKER_OUTPUT_ID_PREFIX = "twe_" as const;
+export const TASK_WORKER_ACTIVITY_ID_PREFIX = "twa_" as const;
+export const TASK_WORKER_SETTLEMENT_ID_PREFIX = "tws_" as const;
 export const PUBLISHED_INTERFACE_FAILURE_REASONS = Object.freeze([
   "absent",
   "not_file",

@@ -1,7 +1,7 @@
 import type { ParkCategory, WorkItemState } from "#shared/task-board-contract";
 import type { Row } from "../persistence/rows.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 import type { NotificationsCollaborator } from "./notifications.js";
 import { transitionWorkItemInTransaction } from "../persistence/work-item-transitions.js";
 import type { WorkItemsCollaborator } from "./work-items.js";

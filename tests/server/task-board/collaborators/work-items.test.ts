@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AutomationCollaborator } from "#server/task-board/collaborators/automation";
-import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/board-runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
 import { WorkItemsCollaborator } from "#server/task-board/collaborators/work-items";
 import { TaskBoardStore } from "#server/task-board/persistence/store";

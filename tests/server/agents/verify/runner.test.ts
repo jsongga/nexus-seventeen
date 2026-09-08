@@ -111,7 +111,7 @@ async function backgroundRepo(full: readonly string[]): Promise<string> {
   await writePath(root, ".test-helpers/never-reached.mjs", 'process.stdout.write("NEVER_REACHED\\n");\n');
   await writePath(root, ".test-helpers/sleep.mjs", "setTimeout(() => process.exit(0), 5000);\n");
 
-  const relativeSupervisor = "build/server/agents/verify/supervisor.js";
+  const relativeSupervisor = "build/server/agents/verify/step-runner.js";
   await mkdir(dirname(join(root, relativeSupervisor)), { recursive: true });
   await copyFile(join(process.cwd(), relativeSupervisor), join(root, relativeSupervisor));
   return root;
@@ -460,7 +460,7 @@ test("a background full run progresses from running to green and tail reads only
 
 test("a background full run can use an orchestrator supervisor outside the target repo", async () => {
   const root = await backgroundRepo(["node .test-helpers/exit0.mjs"]);
-  const targetSupervisor = join(root, "build", "server", "agents", "verify", "supervisor.js");
+  const targetSupervisor = join(root, "build", "server", "agents", "verify", "step-runner.js");
   const supervisorPath = join(root, "..", `orchestrator-supervisor-${Date.now()}.js`);
   await copyFile(targetSupervisor, supervisorPath);
   await rm(join(root, "build"), { recursive: true, force: true });

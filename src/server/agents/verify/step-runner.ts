@@ -1,3 +1,5 @@
+/** Runs verify command steps sequentially and records their detached status. */
+
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";

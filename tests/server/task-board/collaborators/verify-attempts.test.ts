@@ -16,7 +16,7 @@ import {
   type MachineVerifyRunner,
   type MachineVerifyWorkspaceManager,
 } from "#server/task-board/collaborators/verify-attempts";
-import { TaskBoardRuntime } from "#server/task-board/collaborators/runtime";
+import { TaskBoardRuntime } from "#server/task-board/collaborators/board-runtime";
 import { TasksCollaborator } from "#server/task-board/collaborators/tasks";
 import { registerParentTerminationCascade } from "#server/task-board/persistence/work-item-transitions";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
@@ -288,7 +288,7 @@ async function attemptFixture(
       )
     : null;
   const collaborator = new VerifyAttemptsCollaborator(runtime, {
-    supervisorPath: "/orchestrator/build/server/agents/verify/supervisor.js",
+    supervisorPath: "/orchestrator/build/server/agents/verify/step-runner.js",
     workspaceManagerFactory: () => workspace,
     runnerFactory: ({ repoRoot }) => {
       assert.ok(repoRoot === workspacePath || repoRoot === "/target/repository");

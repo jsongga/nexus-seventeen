@@ -1,3 +1,5 @@
+/** Builds local-process or container-backed task workers for fleet lanes. */
+
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import type { RuntimeAdapter } from "../runtime/adapter.js";

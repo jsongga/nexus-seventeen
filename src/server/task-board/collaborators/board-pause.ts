@@ -3,7 +3,7 @@ import { parseBoardPause } from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";
 import { conflict } from "../errors.js";
 import { exactNow } from "../persistence/timestamps.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 
 type Row = Record<string, unknown>;
 

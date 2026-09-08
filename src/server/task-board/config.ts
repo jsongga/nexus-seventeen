@@ -19,7 +19,7 @@ export interface TaskBoardOptions {
   readonly humanToken: string;
   readonly humanPrincipal: string;
   readonly corsOrigins?: readonly string[];
-  readonly host?: TaskBoardHostOptions;
+  readonly hostPaths?: TaskBoardHostOptions;
   readonly listenHost?: TaskBoardListenHost;
   readonly port?: number;
   readonly maxBodyBytes?: number;
@@ -109,7 +109,7 @@ export function normalizeTaskBoardConfig(options: TaskBoardOptions): TaskBoardCo
   if (!IDENTIFIER.test(humanPrincipal)) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "humanPrincipal is invalid");
   }
-  const hostOptions = options.host;
+  const hostOptions = options.hostPaths;
   const projectRoots = hostOptions?.projectRoots?.map((value) => configText(value, "host.projectRoots entry", 4_096));
   if (projectRoots?.some((value) => !value.startsWith("/"))) {
     throw new TaskBoardError(500, "INVALID_CONFIGURATION", "host.projectRoots entries must be absolute paths");

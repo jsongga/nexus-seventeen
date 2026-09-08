@@ -47,7 +47,7 @@ For a project with several repositories:
 3. Add one lane per agent to [`fleet.json`](../src/server/agents/task-fleet/fleet.example.json). Match its `agentId`, and set `workingDirectory` to that repository's absolute path.
 4. Start the fleet with `node build/server/agents/task-fleet/main.js /absolute/path/to/fleet.json`.
 
-The board-to-worker pairing is a convention, not an enforced invariant. The claim names an agent, while [`task-fleet/runtime.ts`](../src/server/agents/task-fleet/runtime.ts) independently builds the workspace from `workingDirectory`. If the board agent names repository B and the lane points at repository A, B's task can be committed in A's tree while the board records B as its target.
+The board-to-worker pairing is a convention, not an enforced invariant. The claim names an agent, while [`task-fleet/worker-factory.ts`](../src/server/agents/task-fleet/worker-factory.ts) independently builds the workspace from `workingDirectory`. If the board agent names repository B and the lane points at repository A, B's task can be committed in A's tree while the board records B as its target.
 
 ## Diagram mapping
 
@@ -121,7 +121,7 @@ Anthropic's [prompt cache](https://platform.claude.com/docs/en/build-with-claude
 
 ## Current limits
 
-- [`src/server/task-board/schema.ts`](../src/server/task-board/schema.ts) stores nine ordered stage owners, not transition edges, conditions, retry limits, or backedges.
+- [`src/server/task-board/request-parsers.ts`](../src/server/task-board/request-parsers.ts) stores nine ordered stage owners, not transition edges, conditions, retry limits, or backedges.
 - Project creation and catalog reads are human-only. A trusted coordinator needs narrowly scoped server authority; the operator bearer token must never enter a model prompt.
 - The engineer role is broader than ideal for read-only research and planning. The runtime must enforce tool allowlists in addition to prompt instructions.
 - After Effects requires a licensed macOS or Windows worker; it cannot run inside the current Dokploy container.

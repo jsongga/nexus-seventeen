@@ -6,7 +6,7 @@ import {
 } from "#shared/task-board-contract";
 import { parseParkRecord, parseReviewFindingEntity } from "#shared/task-board-contract/validate";
 import { nullableString, numberValue, stringValue, type Row } from "../persistence/rows.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 import { workItemTitleProjection } from "./work-items.js";
 
 const PARK_RECORDS_SINCE = "2026-08-20";

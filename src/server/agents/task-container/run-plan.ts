@@ -1,3 +1,5 @@
+/** Builds one container invocation plan from a task-run launch request. */
+
 import type { AgentRole } from "#shared/task-board-contract";
 import type { ContainerAgentLauncherOptions } from "./container-launcher.js";
 

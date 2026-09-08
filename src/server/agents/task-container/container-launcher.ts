@@ -26,7 +26,7 @@ import type {
   AgentRunHandle,
   AgentRunOutcome,
 } from "#server/agents/task-worker/types";
-import { buildContainerRunPlan } from "./arguments.js";
+import { buildContainerRunPlan } from "./run-plan.js";
 
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 512 * 1024;

@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { loadTaskFleetConfig } from "./config.js";
 import { TaskFleet } from "./fleet.js";
-import { classifyTaskFleetError, createTaskFleetWorker } from "./runtime.js";
+import { classifyTaskFleetError, createTaskFleetWorker } from "./worker-factory.js";
 
 function configPath(): string {
   const arguments_ = process.argv.slice(2);

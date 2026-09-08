@@ -60,7 +60,7 @@ export function gitExecOptions(): {
 // failure text and would reach a log, a handoff, or a persisted settlement.
 // Redaction happens here, at the one place every caller shares. The properties
 // callers branch on survive: `code` (interface-context maps ENOBUFS to
-// "too_large") and `status`, and merge-executor still reads stderr/stdout —
+// "too_large") and `status`, and pipeline-merge still reads stderr/stdout —
 // redacted.
 export function redactGitFailureForTest(error: unknown): never {
   return redactGitFailure(error);
@@ -82,7 +82,7 @@ function redactGitFailure(error: unknown): never {
   for (const stream of ["stderr", "stdout"] as const) {
     const value = source[stream];
     // Streams keep their line structure: git's failure text is multi-line and
-    // merge-executor surfaces it in a user-visible summary, where a single
+    // pipeline-merge surfaces it in a user-visible summary, where a single
     // run-jammed line would be unreadable.
     if (typeof value === "string") redacted[stream] = redactMultilineForPersistence(value);
     else if (Buffer.isBuffer(value)) {

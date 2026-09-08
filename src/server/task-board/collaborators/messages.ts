@@ -16,7 +16,7 @@ import { conflict, TaskBoardError } from "../errors.js";
 import { messageFromRow, questionFromRow, stringValue, wakeupFromRow } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
 import { redactForPersistence } from "../../shared/redact.js";
-import type { Actor, TaskBoardRuntime } from "./runtime.js";
+import type { Actor, TaskBoardRuntime } from "./board-runtime.js";
 
 export class MessagesCollaborator {
   constructor(private readonly runtime: TaskBoardRuntime) {}

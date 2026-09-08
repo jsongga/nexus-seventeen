@@ -1,3 +1,5 @@
+/** Inspects and merges phased pipeline branches with neutral Git process state. */
+
 import { GIT_OBJECT_ID_PATTERN } from "#shared/task-board-contract";
 import { defaultGitRunner, gitArguments, type GitRunner, type GitTextRunner } from "../../shared/git.js";
 

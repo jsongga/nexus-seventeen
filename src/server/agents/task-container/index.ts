@@ -1,5 +1,5 @@
 export { AGENT_IMAGE_REPOSITORY, computeAgentImageTag } from "./image-tag.js";
-export { buildContainerRunPlan } from "./arguments.js";
+export { buildContainerRunPlan } from "./run-plan.js";
 export { ContainerAgentLauncher } from "./container-launcher.js";
 export {
   assertDockerAvailable,

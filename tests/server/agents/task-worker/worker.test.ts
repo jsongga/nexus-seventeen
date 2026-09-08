@@ -10,7 +10,7 @@ import { agentPrompt, structuredOutcome } from "#server/agents/task-worker/agent
 import { TaskBoardHttpError } from "#server/agents/task-worker/http-board-client";
 import { TaskWorkerJournalStore } from "#server/agents/task-worker/journal";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
-import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "#server/agents/task-worker/schema";
+import { emptyTaskWorkerJournal, parseBoundedAgentContext } from "#server/agents/task-worker/claim-parsers";
 import { TaskWorker } from "#server/agents/task-worker/worker";
 import type {
   AgentRunOutcome,

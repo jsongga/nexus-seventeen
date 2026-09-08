@@ -43,7 +43,7 @@ import {
   parseProject,
   parseWorkItemAudit,
 } from "./parse/entities";
-import { array, boundedText, integer, record } from "./parse/scalars";
+import { boundedText, integer, parseArray, parseRecord } from "./parse/scalars";
 import {
   maximumRawWorkItems,
   maximumTaskMessages,
@@ -224,8 +224,8 @@ function taskCommandVersion(value: unknown, path: string): number {
 async function errorDetails(response: Response): Promise<{ message: string; code: string | null }> {
   const fallback = `Task board request failed (${response.status})`;
   try {
-    const value = record(await response.json(), "error response");
-    const error = record(value.error, "error response.error");
+    const value = parseRecord(await response.json(), "error response");
+    const error = parseRecord(value.error, "error response.error");
     return {
       message: typeof error.message === "string" && error.message.length > 0 ? error.message : fallback,
       code: typeof error.code === "string" && error.code.length > 0 ? error.code : null,
@@ -240,7 +240,7 @@ function clientEventId(): string {
 }
 
 function repositoryFromEnvelope(value: unknown, path: string): BoardRepository {
-  const envelope = record(value, path);
+  const envelope = parseRecord(value, path);
   const repository = parseRepositoryEntity(envelope.repository, `${path}.repository`);
   return {
     id: repository.repositoryId,
@@ -324,11 +324,11 @@ export function createTaskBoardClient(
     const messages: RawMessage[] = [];
     let after = 0;
     while (true) {
-      const envelope = record(
+      const envelope = parseRecord(
         await json(`/v1/tasks/${encodeURIComponent(task.taskId)}/messages?after=${after}`, { signal }),
         "messages response"
       );
-      const page = array(envelope.messages, "messages response.messages", parseMessage);
+      const page = parseArray(envelope.messages, "messages response.messages", parseMessage);
       const cursor = integer(envelope.cursor, "messages response.cursor");
       if (page.length > taskMessagePageSize) throw new Error("messages response exceeded the page size limit");
       if (cursor < after) throw new Error("messages response cursor moved backwards");
@@ -430,16 +430,16 @@ export function createTaskBoardClient(
       return parseParksLedger(await json("/v1/ledgers/parks", { signal }), "parks ledger response");
     },
     async getNotifications(signal) {
-      const envelope = record(await json("/v1/notifications", { signal }), "notifications response");
-      const unread = array(envelope.unread, "notifications response.unread", parseBoardNotification);
-      const recentRead = array(envelope.recentRead, "notifications response.recentRead", parseBoardNotification);
+      const envelope = parseRecord(await json("/v1/notifications", { signal }), "notifications response");
+      const unread = parseArray(envelope.unread, "notifications response.unread", parseBoardNotification);
+      const recentRead = parseArray(envelope.recentRead, "notifications response.recentRead", parseBoardNotification);
       if (unread.length > 100) throw new Error("notifications response.unread cannot contain more than 100 records");
       if (recentRead.length > 50)
         throw new Error("notifications response.recentRead cannot contain more than 50 records");
       return { unread, recentRead };
     },
     async markNotificationRead(notificationId, version) {
-      const envelope = record(
+      const envelope = parseRecord(
         await json(`/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
           method: "POST",
           body: JSON.stringify({ version: integer(version, "notification read.version", 1) }),
@@ -529,11 +529,11 @@ export function createTaskBoardClient(
       );
     },
     async getProjectArtifacts(projectId, signal) {
-      const envelope = record(
+      const envelope = parseRecord(
         await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, { signal }),
         "artifacts response"
       );
-      return array(envelope.artifacts, "artifacts response.artifacts", parseProjectArtifact);
+      return parseArray(envelope.artifacts, "artifacts response.artifacts", parseProjectArtifact);
     },
     async confirmWorkflow(planRevisionId) {
       return workflowFromEnvelope(
@@ -566,7 +566,7 @@ export function createTaskBoardClient(
         maximumFrameLength: 64 * 1_024,
         onEvent: (event) => {
           if (!event.data) return;
-          const envelope = record(JSON.parse(event.data) as unknown, "workflow event");
+          const envelope = parseRecord(JSON.parse(event.data) as unknown, "workflow event");
           input.onEvent(parseWorkflowEvent(envelope.event, "workflow event.event"));
         },
         sizeLimitError: () => new Error("A workflow event exceeded the size limit"),
@@ -593,8 +593,8 @@ export function createTaskBoardClient(
         json("/v1/projects", { signal, headers: markerHeaders }),
         json("/v1/work-items", { signal, headers: markerHeaders }),
       ]);
-      const projectsEnvelope = record(projectsValue, "projects response");
-      const projects = array(projectsEnvelope.projects, "projects response.projects", parseProject);
+      const projectsEnvelope = parseRecord(projectsValue, "projects response");
+      const projects = parseArray(projectsEnvelope.projects, "projects response.projects", parseProject);
       const workItems = await paginatedWorkItems(workItemsValue, signal);
       const boards = await mapWithConcurrency(projects, 6, async (project) => {
         return parseRawBoard(await json(`/v1/projects/${encodeURIComponent(project.projectId)}/board`, { signal }));
@@ -670,12 +670,12 @@ export function createTaskBoardClient(
       );
     },
     async getHostProjectRoots(signal) {
-      const envelope = record(await json("/v1/host/project-roots", { signal }), "host roots response");
-      return array(envelope.roots, "host roots response.roots", parseHostProjectRoot);
+      const envelope = parseRecord(await json("/v1/host/project-roots", { signal }), "host roots response");
+      return parseArray(envelope.roots, "host roots response.roots", parseHostProjectRoot);
     },
     async getHostDirectories(path, signal) {
       const query = path === undefined ? "" : `?path=${encodeURIComponent(path)}`;
-      const envelope = record(await json(`/v1/host/directories${query}`, { signal }), "host directories response");
+      const envelope = parseRecord(await json(`/v1/host/directories${query}`, { signal }), "host directories response");
       return parseHostDirectoryListing(envelope.listing, "host directories response.listing");
     },
     async createWorkItem(input) {

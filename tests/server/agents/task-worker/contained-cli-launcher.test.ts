@@ -34,7 +34,7 @@ import { ContractValidationError, parseWorkflowPlanDraft } from "#shared/task-bo
 import { ContainedCliAgentLauncher, RESULT_SCHEMA } from "#server/agents/task-worker/contained-cli-launcher";
 import { agentPrompt, structuredOutcome } from "#server/agents/task-worker/agent-envelope";
 import { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
-import { parseAgentRunOutcome } from "#server/agents/task-worker/schema";
+import { parseAgentRunOutcome } from "#server/agents/task-worker/claim-parsers";
 import { CLAUDE_PROFILE, CODEX_PROFILE } from "../runtime/profile-fixtures.js";
 import { context, tempRoot, until } from "./helpers.js";
 

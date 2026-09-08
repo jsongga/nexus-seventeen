@@ -30,7 +30,7 @@ import {
 import { AgentProcessError, type CredentialRedactionSite, type RuntimeEvent } from "../runtime/adapter.js";
 import { CREDENTIAL_REJECTION_PATTERNS, type CredentialPatternName } from "../../shared/redact.js";
 import type { PromptRegistry } from "./prompt-registry.js";
-import { parseAgentRunOutcome } from "./schema.js";
+import { parseAgentRunOutcome } from "./claim-parsers.js";
 import type { AgentLaunchRequest, AgentRunOutcome } from "./types.js";
 
 /* —— Structured result schema —— */

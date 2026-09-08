@@ -11,7 +11,7 @@ work to an agent; a worker process picks it up and executes it in a **working tr
 Campaign 16 gave a work item its own repository, so a product spanning several repositories can
 be decomposed across them. Its exit arc could not run, and the reason is not in the board:
 
-- a worker's tree comes from **its own static configuration** — `task-fleet/runtime.ts` sets
+- a worker's tree comes from **its own static configuration** — `task-fleet/worker-factory.ts` sets
   `repositoryPath: config.workingDirectory`;
 - a claim carries **no repository at all**;
 - the board routes work by **agent identity**, and an agent belongs to a **project**

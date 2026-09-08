@@ -44,16 +44,16 @@ export {
   parseWorkItemDetail,
 } from "./parse/entities";
 export {
-  array,
-  boolean,
+  parseArray,
+  parseBoolean,
   boundedText,
   exactRecord,
   integer,
   member,
   nullableString,
-  record,
+  parseRecord,
   skillIdentifier,
-  string,
+  parseString,
   timestamp,
 } from "./parse/scalars";
 export {

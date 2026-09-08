@@ -31,7 +31,7 @@ import {
   projectRun,
   projectTask,
 } from "./entities";
-import { array, loose, ms, nullableMs, record } from "./scalars";
+import { loose, ms, nullableMs, parseArray, parseRecord } from "./scalars";
 import { type RawBoard } from "./types";
 
 /* —— Workflow and board —— */
@@ -132,12 +132,12 @@ export function parseWorkflowEvent(value: unknown, path: string): WorkflowEvent 
 }
 
 export function parseProjectWorkflow(value: unknown, path: string): ProjectWorkflow {
-  const item = record(value, path);
+  const item = parseRecord(value, path);
   return {
-    plans: array(item.plans, `${path}.plans`, parseWorkflowPlan),
-    nodes: array(item.nodes, `${path}.nodes`, parseWorkflowNode),
-    handoffs: array(item.handoffs, `${path}.handoffs`, parseWorkflowHandoff),
-    events: array(item.events, `${path}.events`, parseWorkflowEvent),
+    plans: parseArray(item.plans, `${path}.plans`, parseWorkflowPlan),
+    nodes: parseArray(item.nodes, `${path}.nodes`, parseWorkflowNode),
+    handoffs: parseArray(item.handoffs, `${path}.handoffs`, parseWorkflowHandoff),
+    events: parseArray(item.events, `${path}.events`, parseWorkflowEvent),
   };
 }
 

@@ -7,7 +7,7 @@ import {
 import { sha256 } from "../canonical.js";
 import { conflict } from "../errors.js";
 import { exactNow } from "../persistence/timestamps.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 import type { ProjectsCollaborator } from "./projects.js";
 import type { RunsCollaborator } from "./runs.js";
 import type { WorkItemsCollaborator } from "./work-items.js";

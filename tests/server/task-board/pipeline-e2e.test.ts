@@ -2481,7 +2481,7 @@ test("campaign 10 exit: a blast-radius change lands as phased children across tw
 //
 // The arc reaches the migrate child and stops: `consumer.engineerWorker` never
 // claims it. A worker's repository comes from its own static configuration
-// (`task-fleet/runtime.ts` sets `repositoryPath: config.workingDirectory`), and
+// (`task-fleet/worker-factory.ts` sets `repositoryPath: config.workingDirectory`), and
 // a claim carries no repository at all — the board routes work by agent
 // identity, and an agent belongs to a project. That was sufficient while a
 // project had exactly one repository: project determined repository.

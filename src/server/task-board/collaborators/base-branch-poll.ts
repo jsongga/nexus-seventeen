@@ -2,8 +2,8 @@ import type { Row } from "../persistence/rows.js";
 import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";
 import type { GitTextRunner } from "../../shared/git.js";
-import type { TaskBoardRuntime } from "./runtime.js";
-import { inspectPipelineBaseAdvance } from "./merge-executor.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
+import { inspectPipelineBaseAdvance } from "./pipeline-merge.js";
 import { ProjectsCollaborator, runWorkflowGit } from "./projects.js";
 
 interface BaseBranchCandidate {

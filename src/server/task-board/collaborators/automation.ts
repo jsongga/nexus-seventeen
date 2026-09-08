@@ -2,9 +2,9 @@ import type { AutomationConfiguration, UpdateAutomationConfigurationRequest } fr
 import { canonicalJson } from "../canonical.js";
 import { conflict } from "../errors.js";
 import { automationConfigurationFromRow } from "../persistence/rows.js";
-import { parseUpdateAutomationConfiguration } from "../schema.js";
+import { parseUpdateAutomationConfiguration } from "../request-parsers.js";
 import { exactNow } from "../persistence/timestamps.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 
 export class AutomationCollaborator {
   constructor(private readonly runtime: TaskBoardRuntime) {}

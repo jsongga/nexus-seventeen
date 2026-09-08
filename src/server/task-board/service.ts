@@ -51,7 +51,7 @@ import {
   parseUpdateRepository,
   parseUpdateWorkItem,
   parseWorkItemAudit,
-} from "./schema.js";
+} from "./request-parsers.js";
 
 export interface TaskBoardAddress {
   readonly host: string;

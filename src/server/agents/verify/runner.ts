@@ -256,7 +256,7 @@ export class VerifyRunner {
     this.#runsRoot = options.runsRoot ?? join(options.repoRoot, ".verify-runs");
     this.#keepRuns = options.keepRuns ?? DEFAULT_KEEP_RUNS;
     this.#supervisorPath =
-      options.supervisorPath ?? join(options.repoRoot, "build", "server", "agents", "verify", "supervisor.js");
+      options.supervisorPath ?? join(options.repoRoot, "build", "server", "agents", "verify", "step-runner.js");
     this.#execute = options.execute ?? executeCommand;
   }
 

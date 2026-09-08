@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { emptyTaskWorkerJournal, parseTaskWorkerJournal } from "./schema.js";
+import { emptyTaskWorkerJournal, parseTaskWorkerJournal } from "./claim-parsers.js";
 import type { TaskWorkerIdentity, TaskWorkerJournal } from "./types.js";
 
 const MAX_JOURNAL_BYTES = 2 * 1024 * 1024;

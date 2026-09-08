@@ -9,7 +9,7 @@ import {
   classifyTaskFleetError,
   createTaskFleetWorker,
   isTransientTaskFleetError,
-} from "../../../../src/server/agents/task-fleet/runtime.js";
+} from "../../../../src/server/agents/task-fleet/worker-factory.js";
 import { ContainedCliAgentLauncher } from "../../../../src/server/agents/task-worker/contained-cli-launcher.js";
 import { HttpTaskBoardClient } from "../../../../src/server/agents/task-worker/http-board-client.js";
 import { TaskWorker } from "../../../../src/server/agents/task-worker/worker.js";

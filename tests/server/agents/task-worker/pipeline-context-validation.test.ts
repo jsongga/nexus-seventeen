@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseBoundedAgentContext } from "#server/agents/task-worker/schema";
+import { parseBoundedAgentContext } from "#server/agents/task-worker/claim-parsers";
 import type { BoundedAgentContext } from "#server/agents/task-worker/types";
 import {
   DESIGN_FAILURE_POINTS,

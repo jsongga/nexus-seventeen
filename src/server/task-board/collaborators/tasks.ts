@@ -17,7 +17,7 @@ import { canonicalJson } from "../canonical.js";
 import { conflict, TaskBoardError } from "../errors.js";
 import { wakeupFromRow } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
-import type { Actor, TaskBoardRuntime } from "./runtime.js";
+import type { Actor, TaskBoardRuntime } from "./board-runtime.js";
 
 export class TasksCollaborator {
   constructor(private readonly runtime: TaskBoardRuntime) {}

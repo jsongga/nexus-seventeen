@@ -32,7 +32,7 @@ import { workItemPriorityCases } from "../persistence/store.js";
 import { numberValue, stringValue, workItemFromRow, type Row } from "../persistence/rows.js";
 import { exactNow } from "../persistence/timestamps.js";
 import type { AutomationCollaborator } from "./automation.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 import type { TasksCollaborator } from "./tasks.js";
 import { NotificationsCollaborator } from "./notifications.js";
 import { createLazyManagerInTransaction } from "./agent-identities.js";

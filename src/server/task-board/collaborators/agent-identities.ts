@@ -4,7 +4,7 @@ import { sha256 } from "../canonical.js";
 import { conflict } from "../errors.js";
 import { AGENT_REPOSITORY_ID_SQL } from "../persistence/repository-path.js";
 import { exactNow } from "../persistence/timestamps.js";
-import type { TaskBoardRuntime } from "./runtime.js";
+import type { TaskBoardRuntime } from "./board-runtime.js";
 
 const LAZY_IDENTITY_ACTOR = "system:lazy-agent-identity";
 
