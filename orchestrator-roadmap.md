@@ -218,6 +218,20 @@ where tokens are uncommon anyway), and an identifier carrying a digit
 ("OAuth2Middleware") is still rejected. Persistence redacts in every one of these
 cases; only the send path is affected.
 
+**9.12. A pause conflict is lost when its popover closes first** _(found
+2026-09-08 by roadmap 9.8; `.superpowers/sdd/2026-09-08-load-tolerant-timing/task-2-finding.md`)_
+— `confirmPause` reports a version conflict by setting `pauseControlError`, but
+`openPausePopover` and `closePausePopover` both clear it and an effect closes the
+popover on any `boardPause` change (`BoardApp.tsx:329,786,792`). So the error is
+observable only if the response resolves while the popover is still open. When
+the rail breakpoint changes mid-request the popover can close first, and the
+operator loses both the conflict and the reason they typed. This is why the
+`a pending pause keeps its reason and error…` arc passes about two runs in three:
+it is racing a behaviour the app does not define, not a timing window. Deciding
+it means choosing where a pending pause result lives and how long a stale
+conflict stays worth showing — a product question, which is why 9.8 did not
+absorb it.
+
 **9.11. Move the agent credential boundary from rejection to redaction**
 _(proposed 2026-09-02)_ — 9.10 is the third attempt to make a fail-closed filter
 precise enough for prose, and each attempt has had a false-positive class found
