@@ -254,10 +254,13 @@ function livePhaseTitle(stage: Exclude<AgentTaskPhase["stage"], "done">): string
   }
 }
 
-function isUnbufferedLauncherLifecycle(event: RuntimeEvent): boolean {
+function isUnbufferedActivity(event: RuntimeEvent): boolean {
   return (
-    event.type === "tool_call" &&
-    (event.name === "container_starting" || event.name === "container_attached" || event.name === "container_teardown")
+    event.type === "credential_redaction" ||
+    (event.type === "tool_call" &&
+      (event.name === "container_starting" ||
+        event.name === "container_attached" ||
+        event.name === "container_teardown"))
   );
 }
 
@@ -1286,7 +1289,7 @@ export class TaskWorker {
         if (!(await appendActivity("Agent updated a task phase."))) return runtimeFailureDetail;
       }
       const derivedActivity = activityFromEvent(event);
-      if (isUnbufferedLauncherLifecycle(event)) {
+      if (isUnbufferedActivity(event)) {
         if (derivedActivity !== null && !(await appendActivity(derivedActivity))) return runtimeFailureDetail;
       } else {
         const ready = buffer.push(derivedActivity);

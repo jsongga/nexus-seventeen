@@ -27,8 +27,8 @@ import {
   WORKFLOW_STAGES,
   type AgentRole,
 } from "#shared/task-board-contract";
-import { AgentProcessError, type RuntimeEvent } from "../runtime/adapter.js";
-import { CREDENTIAL_REJECTION_PATTERNS } from "../../shared/redact.js";
+import { AgentProcessError, type CredentialRedactionSite, type RuntimeEvent } from "../runtime/adapter.js";
+import { CREDENTIAL_REJECTION_PATTERNS, type CredentialPatternName } from "../../shared/redact.js";
 import type { PromptRegistry } from "./prompt-registry.js";
 import { parseAgentRunOutcome } from "./schema.js";
 import type { AgentLaunchRequest, AgentRunOutcome } from "./types.js";
@@ -451,8 +451,6 @@ export function configText(value: string, label: string, maximum: number): strin
 
 const AGENT_BOUNDARY_CREDENTIAL_MARKER = "[redacted: credential]";
 
-export type CredentialPatternName = keyof typeof CREDENTIAL_REJECTION_PATTERNS;
-
 export interface CredentialRedaction {
   readonly patternName: CredentialPatternName;
   readonly count: number;
@@ -523,6 +521,18 @@ export function redactCredentials<Value>(
     return count === 0 ? [] : [Object.freeze({ patternName, count })];
   });
   return Object.freeze({ value: redactedValue, redactions: Object.freeze(redactions) });
+}
+
+/** Converts safe redaction aggregates into provider activity without matched text. */
+export function credentialRedactionEvents(
+  site: CredentialRedactionSite,
+  redactions: readonly CredentialRedaction[]
+): readonly RuntimeEvent[] {
+  return Object.freeze(
+    redactions.map(({ patternName, count }) =>
+      Object.freeze({ type: "credential_redaction" as const, site, patternName, count })
+    )
+  );
 }
 
 export function delay(milliseconds: number): Promise<void> {
@@ -746,7 +756,7 @@ function outputObject(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export function structuredOutcome(value: unknown): AgentRunOutcome {
+export function structuredOutcomeWithRedactions(value: unknown): CredentialRedactionResult<AgentRunOutcome> {
   const item = outputObject(value, "Provider result");
   const expected = [
     "status",
@@ -800,8 +810,12 @@ export function structuredOutcome(value: unknown): AgentRunOutcome {
   // can request length-preserving markers, but it must never reject valid work.
   const redaction = redactCredentials(outcome);
   try {
-    return parseAgentRunOutcome(redaction.value);
+    return Object.freeze({ value: parseAgentRunOutcome(redaction.value), redactions: redaction.redactions });
   } catch {
-    return redactCredentials(outcome, { preserveStringLengths: true }).value;
+    return redactCredentials(outcome, { preserveStringLengths: true });
   }
+}
+
+export function structuredOutcome(value: unknown): AgentRunOutcome {
+  return structuredOutcomeWithRedactions(value).value;
 }

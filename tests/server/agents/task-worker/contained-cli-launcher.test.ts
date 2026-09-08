@@ -460,6 +460,11 @@ process.stdin.on("end", () => {
     },
     { type: "stage_finished" },
   ]);
+  assert.equal(
+    observedActivity.filter((event) => event.type === "credential_redaction").length,
+    0,
+    "a run with nothing to redact stays silent"
+  );
   const prompt = await readFile(join(fixture.scratch, "prompt.txt"), "utf8");
   assert.match(prompt, /research → plan → execute → test/u);
   assert.match(prompt, /single event-triggered run/u);
@@ -486,7 +491,7 @@ process.stdin.on("data", (chunk) => { input += chunk; });
 process.stdin.on("end", () => {
   require("node:fs").writeFileSync(require("node:path").join(process.env.TMPDIR, "redacted-prompt.txt"), input);
   process.stderr.write(${JSON.stringify(`Diagnostic contained <${credential}>; keep this.`)});
-  const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
+  const result = {status:"completed",progress:[],result:${JSON.stringify(`Done after ${credential}.`)},proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
   console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}));
   console.log(JSON.stringify({type:"turn.completed"}));
 });
@@ -531,7 +536,8 @@ process.stdin.on("end", () => {
     }),
   });
 
-  assert.equal((await handle.completion).status, "completed");
+  const outcome = await handle.completion;
+  assert.equal(outcome.status, "completed");
   const activity: RuntimeEvent[] = [];
   for await (const event of handle.activity) activity.push(event);
   const prompt = await readFile(join(fixture.scratch, "redacted-prompt.txt"), "utf8");
@@ -541,6 +547,15 @@ process.stdin.on("end", () => {
   assert.match(prompt, /Remove \[redacted: credential\] from the fixture\./u);
   assert.doesNotMatch(prompt, new RegExp(credential, "u"));
   assert.deepEqual(
+    activity.filter((event) => event.type === "credential_redaction"),
+    [
+      { type: "credential_redaction", site: "context", patternName: "privateKey", count: 1 },
+      { type: "credential_redaction", site: "context", patternName: "prefixedToken", count: 1 },
+      { type: "credential_redaction", site: "provider_outcome", patternName: "prefixedToken", count: 1 },
+      { type: "credential_redaction", site: "diagnostics", patternName: "prefixedToken", count: 1 },
+    ]
+  );
+  assert.deepEqual(
     activity.find((event) => event.type === "tool_result" && event.name === "diagnostics"),
     {
       type: "tool_result",
@@ -548,6 +563,8 @@ process.stdin.on("end", () => {
       output: "Diagnostic contained <[redacted: credential]>; keep this.",
     }
   );
+  assert.match(JSON.stringify(outcome), /Done after \[redacted: credential\]/u);
+  assert.doesNotMatch(JSON.stringify({ activity, outcome, prompt }), new RegExp(credential, "u"));
 });
 
 test("spawns the binary selected by the runtime profile", async () => {
@@ -642,10 +659,11 @@ test("parses Claude stream-json activity while preserving its terminal structure
     {
       type: "tool_call",
       name: "Read",
-      detail: '{"file_path":"/Users/alice/private.ts","token":"sk-ant-provider-secret"}',
+      detail: '{"file_path":"/Users/alice/private.ts","token":"[redacted: credential]"}',
     },
     { type: "stage_finished" },
   ]);
+  assert.doesNotMatch(JSON.stringify(observedActivity), /sk-ant-provider-secret/u);
   const args = JSON.parse(await readFile(join(fixture.scratch, "args.json"), "utf8")) as string[];
   const outputFormat = args.indexOf("--output-format");
   assert.notEqual(outputFormat, -1);

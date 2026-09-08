@@ -185,6 +185,11 @@ function toolResultActivity(event: RuntimeEvent & { readonly type: "tool_result"
   }
 }
 
+function credentialRedactionActivity(event: RuntimeEvent & { readonly type: "credential_redaction" }): string {
+  const site = event.site === "provider_outcome" ? "provider outcome" : event.site;
+  return `Credential redaction at ${site}: ${event.patternName} matched ${event.count} ${event.count === 1 ? "span" : "spans"}.`;
+}
+
 export function activityFromEvent(event: RuntimeEvent): string | null {
   switch (event.type) {
     case "stage_started":
@@ -195,6 +200,8 @@ export function activityFromEvent(event: RuntimeEvent): string | null {
       return toolCallActivity(event.name, event.detail);
     case "tool_result":
       return toolResultActivity(event);
+    case "credential_redaction":
+      return credentialRedactionActivity(event);
     case "stage_finished":
       return "Work finished; preparing the recorded result.";
     case "error":

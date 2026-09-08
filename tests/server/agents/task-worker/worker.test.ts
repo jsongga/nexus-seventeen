@@ -723,6 +723,49 @@ test("preserves unbuffered container lifecycle activity labels", async () => {
   }
 });
 
+test("persists every counted credential redaction without activity coalescing", async () => {
+  const root = await tempRoot();
+  const board = new FakeBoard();
+  board.queued.push((request) => claimed(request));
+  const launcher = new FakeLauncher();
+  const taskWorker = await worker(root, board, launcher);
+  try {
+    const dispatch = taskWorker.dispatchOnce();
+    await until(() => launcher.handles.length === 1, "agent launch");
+    const handle = launcher.handles[0];
+    assert.ok(handle);
+    await until(() => taskWorker.snapshot.activePhase === "running", "running journal state");
+
+    handle.emitActivity({ type: "credential_redaction", site: "context", patternName: "prefixedToken", count: 2 });
+    handle.emitActivity({
+      type: "credential_redaction",
+      site: "provider_outcome",
+      patternName: "privateKey",
+      count: 1,
+    });
+    handle.emitActivity({
+      type: "credential_redaction",
+      site: "diagnostics",
+      patternName: "awsAccessKey",
+      count: 3,
+    });
+    await until(() => board.outputs.length === 3, "credential redaction activity");
+    handle.resolve({ ...completedOutcome("Safe result."), outputs: [] });
+    await dispatch;
+
+    assert.deepEqual(
+      board.outputs.map((entry) => entry.output),
+      [
+        { type: "progress", body: "Credential redaction at context: prefixedToken matched 2 spans." },
+        { type: "progress", body: "Credential redaction at provider outcome: privateKey matched 1 span." },
+        { type: "progress", body: "Credential redaction at diagnostics: awsAccessKey matched 3 spans." },
+      ]
+    );
+  } finally {
+    await taskWorker.close();
+  }
+});
+
 test("structured phase markers replace inference without creating an interleaved phase stream", async () => {
   const root = await tempRoot();
   const board = new FakeBoard();

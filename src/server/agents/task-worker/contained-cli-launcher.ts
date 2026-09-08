@@ -14,9 +14,12 @@ import {
   agentRole,
   boundedInteger,
   configText,
+  credentialRedactionEvents,
   delay,
   redactCredentials,
-  structuredOutcome,
+  structuredOutcomeWithRedactions,
+  type CredentialRedaction,
+  type CredentialRedactionResult,
 } from "./agent-envelope.js";
 import type { PromptRegistry } from "./prompt-registry.js";
 import type { AgentLaunchRequest, AgentLauncher, AgentRunHandle, AgentRunOutcome } from "./types.js";
@@ -151,7 +154,7 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
     let pendingLine = "";
     let activityFinished = false;
     const observeLine = (line: string): void => {
-      for (const event of this.#options.adapter.events(line)) activity.publish(event);
+      for (const event of this.#options.adapter.events(line)) activity.publish(redactCredentials(event).value);
     };
     const observeChunk = (chunk: Buffer): void => {
       pendingLine += decoder.write(chunk);
@@ -159,13 +162,19 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
       pendingLine = lines.pop() ?? "";
       for (const line of lines) observeLine(line);
     };
-    const finishActivity = (diagnostic: string): void => {
+    const finishActivity = (
+      diagnostic: CredentialRedactionResult<string>,
+      providerRedactions: readonly CredentialRedaction[]
+    ): void => {
       if (activityFinished) return;
       activityFinished = true;
       pendingLine += decoder.end();
       if (pendingLine.length > 0) observeLine(pendingLine);
-      if (diagnostic.length > 0) {
-        activity.publish({ type: "tool_result", name: "diagnostics", output: diagnostic });
+      for (const event of credentialRedactionEvents("context", contextRedaction.redactions)) activity.publish(event);
+      for (const event of credentialRedactionEvents("provider_outcome", providerRedactions)) activity.publish(event);
+      for (const event of credentialRedactionEvents("diagnostics", diagnostic.redactions)) activity.publish(event);
+      if (diagnostic.value.length > 0) {
+        activity.publish({ type: "tool_result", name: "diagnostics", output: diagnostic.value });
       }
       activity.close();
     };
@@ -222,35 +231,41 @@ export class ContainedCliAgentLauncher implements AgentLauncher {
         void (async () => {
           clearTimeout(timeout);
           const diagnostic = redactCredentials(Buffer.concat(stderr).toString("utf8"));
-          finishActivity(diagnostic.value);
-          if (termination !== null) {
-            try {
-              await termination;
-            } catch (error) {
-              failure ??= error as Error;
-            }
-          } else if (groupPresent(groupId)) {
-            failure ??= new AgentProcessError("Agent CLI left a descendant process after exit");
-            try {
-              await terminate();
-            } catch (error) {
-              failure = error as Error;
-            }
-          }
-          this.#active = false;
-          if (failure !== null) {
-            reject(failure);
-            return;
-          }
-          if (code !== 0) {
-            reject(new AgentProcessError(`Agent CLI exited unsuccessfully (${code ?? signal ?? "unknown"})`));
-            return;
-          }
+          let providerRedactions: readonly CredentialRedaction[] = [];
           try {
-            const output = Buffer.concat(stdout).toString("utf8");
-            resolve(structuredOutcome(this.#options.adapter.result(output)));
-          } catch (error) {
-            reject(error);
+            if (termination !== null) {
+              try {
+                await termination;
+              } catch (error) {
+                failure ??= error as Error;
+              }
+            } else if (groupPresent(groupId)) {
+              failure ??= new AgentProcessError("Agent CLI left a descendant process after exit");
+              try {
+                await terminate();
+              } catch (error) {
+                failure = error as Error;
+              }
+            }
+            if (failure !== null) {
+              reject(failure);
+              return;
+            }
+            if (code !== 0) {
+              reject(new AgentProcessError(`Agent CLI exited unsuccessfully (${code ?? signal ?? "unknown"})`));
+              return;
+            }
+            try {
+              const output = Buffer.concat(stdout).toString("utf8");
+              const result = structuredOutcomeWithRedactions(this.#options.adapter.result(output));
+              providerRedactions = result.redactions;
+              resolve(result.value);
+            } catch (error) {
+              reject(error);
+            }
+          } finally {
+            finishActivity(diagnostic, providerRedactions);
+            this.#active = false;
           }
         })();
       });

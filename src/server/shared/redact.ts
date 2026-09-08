@@ -84,6 +84,8 @@ export const CREDENTIAL_REJECTION_PATTERNS = Object.freeze({
   awsAccessKey: withoutGlobalFlag(CREDENTIAL_PATTERNS.awsAccessKey),
 });
 
+export type CredentialPatternName = keyof typeof CREDENTIAL_REJECTION_PATTERNS;
+
 /* —— Redaction —— */
 
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/gu;

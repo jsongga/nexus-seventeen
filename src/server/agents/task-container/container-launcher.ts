@@ -12,9 +12,12 @@ import {
   agentRole,
   boundedInteger,
   configText,
+  credentialRedactionEvents,
   delay,
   redactCredentials,
-  structuredOutcome,
+  structuredOutcomeWithRedactions,
+  type CredentialRedaction,
+  type CredentialRedactionResult,
 } from "#server/agents/task-worker/agent-envelope";
 import type { PromptRegistry } from "#server/agents/task-worker/prompt-registry";
 import type {
@@ -288,7 +291,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
     let activityFinished = false;
     let containerAttached = false;
     const observeLine = (line: string): void => {
-      for (const event of this.#options.adapter.events(line)) activity.publish(event);
+      for (const event of this.#options.adapter.events(line)) activity.publish(redactCredentials(event).value);
     };
     const observeChunk = (chunk: Buffer): void => {
       pendingLine += decoder.write(chunk);
@@ -296,13 +299,19 @@ export class ContainerAgentLauncher implements AgentLauncher {
       pendingLine = lines.pop() ?? "";
       for (const line of lines) observeLine(line);
     };
-    const finishActivity = (diagnostic: string): void => {
+    const finishActivity = (
+      diagnostic: CredentialRedactionResult<string>,
+      providerRedactions: readonly CredentialRedaction[]
+    ): void => {
       if (activityFinished) return;
       activityFinished = true;
       pendingLine += decoder.end();
       if (pendingLine.length > 0) observeLine(pendingLine);
-      if (diagnostic.length > 0) {
-        activity.publish({ type: "tool_result", name: "diagnostics", output: diagnostic });
+      for (const event of credentialRedactionEvents("context", contextRedaction.redactions)) activity.publish(event);
+      for (const event of credentialRedactionEvents("provider_outcome", providerRedactions)) activity.publish(event);
+      for (const event of credentialRedactionEvents("diagnostics", diagnostic.redactions)) activity.publish(event);
+      if (diagnostic.value.length > 0) {
+        activity.publish({ type: "tool_result", name: "diagnostics", output: diagnostic.value });
       }
       activity.close();
     };
@@ -373,7 +382,7 @@ export class ContainerAgentLauncher implements AgentLauncher {
       clearTimeout(timeout);
       if (termination === null && !spawnFailed && code !== 0) void terminate();
       const diagnostic = redactCredentials(Buffer.concat(stderr).toString("utf8"));
-      finishActivity(diagnostic.value);
+      let providerRedactions: readonly CredentialRedaction[] = [];
       try {
         if (termination !== null) {
           try {
@@ -387,8 +396,11 @@ export class ContainerAgentLauncher implements AgentLauncher {
           throw new AgentProcessError(`Agent container exited unsuccessfully (${code ?? signal ?? "unknown"})`);
         }
         const output = Buffer.concat(stdout).toString("utf8");
-        return structuredOutcome(this.#options.adapter.result(output));
+        const result = structuredOutcomeWithRedactions(this.#options.adapter.result(output));
+        providerRedactions = result.redactions;
+        return result.value;
       } finally {
+        finishActivity(diagnostic, providerRedactions);
         this.#active = false;
       }
     })();

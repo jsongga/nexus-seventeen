@@ -116,7 +116,7 @@ test("redacts container context and diagnostics without aborting the run", async
       process.stdin.on("end", () => {
         fs.writeFileSync(${JSON.stringify(promptPath)}, input);
         process.stderr.write(${JSON.stringify(`Diagnostic contained <${credential}>; keep this.`)});
-        const result = {status:"completed",progress:[],result:"Done.",proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
+        const result = {status:"completed",progress:[],result:${JSON.stringify(`Done after ${credential}.`)},proposedChildTasks:[],expectedAgentMinutes:null,phases:[],humanQuestion:null,detail:"Done."};
         process.stdout.write(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:JSON.stringify(result)}}) + "\\n");
         process.stdout.write(JSON.stringify({type:"turn.completed"}) + "\\n");
       });
@@ -149,7 +149,8 @@ test("redacts container context and diagnostics without aborting the run", async
     workspace: { path: fixture.workspace },
   });
 
-  assert.equal((await handle.completion).status, "completed");
+  const outcome = await handle.completion;
+  assert.equal(outcome.status, "completed");
   const activity: RuntimeEvent[] = [];
   for await (const event of handle.activity) activity.push(event);
   const prompt = await readFile(promptPath, "utf8");
@@ -159,6 +160,15 @@ test("redacts container context and diagnostics without aborting the run", async
   assert.match(prompt, /Remove \[redacted: credential\] from the fixture\./u);
   assert.doesNotMatch(prompt, new RegExp(credential, "u"));
   assert.deepEqual(
+    activity.filter((event) => event.type === "credential_redaction"),
+    [
+      { type: "credential_redaction", site: "context", patternName: "privateKey", count: 1 },
+      { type: "credential_redaction", site: "context", patternName: "prefixedToken", count: 1 },
+      { type: "credential_redaction", site: "provider_outcome", patternName: "prefixedToken", count: 1 },
+      { type: "credential_redaction", site: "diagnostics", patternName: "prefixedToken", count: 1 },
+    ]
+  );
+  assert.deepEqual(
     activity.find((event) => event.type === "tool_result" && event.name === "diagnostics"),
     {
       type: "tool_result",
@@ -166,6 +176,9 @@ test("redacts container context and diagnostics without aborting the run", async
       output: "Diagnostic contained <[redacted: credential]>; keep this.",
     }
   );
+  assert.match(JSON.stringify(outcome), /Done after \[redacted: credential\]/u);
+  const log = await readFile(fixture.log, "utf8");
+  assert.doesNotMatch(JSON.stringify({ activity, log, outcome, prompt }), new RegExp(credential, "u"));
 });
 
 test("interrupt rejects when daemon errors prevent confirming container absence", async () => {
