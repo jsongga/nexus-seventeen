@@ -1,5 +1,8 @@
-import type { BoardAgent, BoardProject, BoardSnapshot } from "../../types";
+/** Verifies project and agent workspace confirmation surfaces. */
+
+import type { BoardAgent, BoardProject, BoardRepository, BoardSnapshot } from "../../types";
 import type { TaskBoardClient } from "../../data/client";
+import type { ActionResult } from "../../model/action-errors";
 import { AgentPage } from "./AgentPage";
 import { Modal } from "../../components/ui";
 import { ProjectPage, deriveInterruptAllOutcome } from "./ProjectPage";
@@ -44,13 +47,21 @@ const agent: BoardAgent = {
   updatedAt: timestamp,
   updatedAtMs: Date.parse(timestamp),
 };
+const repository: BoardRepository = {
+  id: "repository-one",
+  projectId: project.id,
+  name: "Project source",
+  path: "/repos/project-one",
+  isPrimary: true,
+  version: 1,
+};
 const snapshot: BoardSnapshot = {
   revision: 1,
   generatedAt: timestamp,
   generatedAtMs: Date.parse(timestamp),
   workItems: [],
   projects: [project],
-  repositories: [],
+  repositories: [repository],
   agents: [agent],
   tasks: [],
   messages: [],
@@ -63,7 +74,7 @@ beforeEach(() => {
 });
 
 describe("workspace confirmation surfaces", () => {
-  it("renders project description as context and repoPath as its repository path", () => {
+  it("renders project description as context and the snapshot repository", () => {
     const markup = renderToStaticMarkup(
       createElement(ProjectPage, {
         project,
@@ -72,12 +83,38 @@ describe("workspace confirmation surfaces", () => {
         onAddTask: vi.fn(),
         client: { getProjectArtifacts: vi.fn() } as unknown as TaskBoardClient,
         connected: true,
+        busy: false,
+        onRepositoryMutation: vi.fn(async (): Promise<ActionResult> => ({ ok: true })),
       })
     );
 
     expect(markup).toContain("/repos/project-one");
+    expect(markup).toContain("Project source");
+    expect(markup).toContain("Primary");
     expect(markup).toContain("Project context.");
     expect(markup).toContain("Repository");
+  });
+
+  it("keeps GitHub reorderable after repositories move out of important documents", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProjectPage, {
+        project: {
+          ...project,
+          description:
+            "Summary: Project context.\nGitHub: https://github.com/acme/project-one\nDocs: https://docs.example.com/project-one\nWorkspace: /workspace/project-one",
+        },
+        snapshot,
+        onTask: vi.fn(),
+        onAddTask: vi.fn(),
+        client: { getProjectArtifacts: vi.fn() } as unknown as TaskBoardClient,
+        connected: true,
+        busy: false,
+        onRepositoryMutation: vi.fn(async (): Promise<ActionResult> => ({ ok: true })),
+      })
+    );
+
+    expect(markup).toContain('aria-label="Move GitHub later"');
+    expect(markup).not.toContain('aria-label="Move Repository later"');
   });
 
   it("renders the interrupt and token-rotation confirms as anchored variants", () => {
@@ -89,6 +126,8 @@ describe("workspace confirmation surfaces", () => {
         onAddTask: vi.fn(),
         client: { getProjectArtifacts: vi.fn() } as unknown as TaskBoardClient,
         connected: true,
+        busy: false,
+        onRepositoryMutation: vi.fn(async (): Promise<ActionResult> => ({ ok: true })),
       })
     );
     renderToStaticMarkup(

@@ -1,3 +1,5 @@
+/** Renders work-item status, context, evidence, and human approval actions. */
+
 import { Archive, Check, CirclePause, HelpCircle, RefreshCw, Send, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PipelineSummary } from "@shared/task-board-contract";
@@ -19,6 +21,7 @@ import type {
   BoardChildWorkItem,
   BoardProject,
   BoardQuestion,
+  BoardRepository,
   BoardTask,
   BoardWorkItem,
   BoardWorkItemDependency,
@@ -35,7 +38,13 @@ import {
   initialFamilyState,
 } from "./work-item/family";
 import { AuditSection, StatusTimeline } from "./work-item/observability";
-import { PlanApprovalActions, PlanRecordDetails, PlanRejectionForm, WorkflowNodeCard } from "./work-item/plan";
+import {
+  PlanApprovalActions,
+  PlanRecordDetails,
+  PlanRejectionForm,
+  WorkflowNodeCard,
+  repositoryTargetLabel,
+} from "./work-item/plan";
 
 interface WorkItemDetailProps {
   workItem: BoardWorkItem;
@@ -46,6 +55,7 @@ interface WorkItemDetailProps {
   initialFamily?: InitialWorkItemFamily;
   projectName: string | null;
   projects: readonly BoardProject[];
+  repositories: readonly BoardRepository[];
   parentWorkItem: BoardWorkItem | null;
   planningTask: BoardTask | null;
   openQuestion: BoardQuestion | null;
@@ -73,6 +83,7 @@ export function WorkItemDetail({
   initialFamily,
   projectName,
   projects,
+  repositories,
   parentWorkItem,
   planningTask,
   openQuestion,
@@ -605,6 +616,12 @@ export function WorkItemDetail({
                 </dd>
               </div>
               <div>
+                <dt className="text-xs font-medium text-muted">Repository</dt>
+                <dd className="mt-1 break-words text-ink">
+                  {repositoryTargetLabel(repositories, workItem.resolvedProjectId, workItem.repositoryId)}
+                </dd>
+              </div>
+              <div>
                 <dt className="text-xs font-medium text-muted">Planning task</dt>
                 <dd className="mt-1 flex flex-wrap items-center gap-2 text-ink">
                   <span className="break-words">{planningTask?.title ?? "Not linked yet"}</span>
@@ -868,7 +885,7 @@ export function WorkItemDetail({
                 </div>
               ) : proposedPlan ? (
                 <div className="mt-4">
-                  <PlanRecordDetails plan={proposedPlan} />
+                  <PlanRecordDetails plan={proposedPlan} repositories={repositories} />
                   {planNodes.length > 0 ? (
                     <ol className="mt-3 space-y-3">
                       {planNodes.map((node) => (

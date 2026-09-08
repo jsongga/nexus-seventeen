@@ -80,7 +80,6 @@ src/server/task-board/persistence/timestamps.ts
 src/server/task-board/persistence/work-item-cursor.ts
 src/server/task-board/service.ts
 src/server/task-board/skills.ts
-src/web/BoardApp.tsx
 src/web/components/dialog-stack.ts
 src/web/components/popover.tsx
 src/web/data/sse.ts
@@ -109,5 +108,4 @@ src/web/views/LedgersPage.tsx
 src/web/views/TaskDetail.tsx
 src/web/views/TaskList.tsx
 src/web/views/ThreadPipelineTable.tsx
-src/web/views/WorkItemDetail.tsx
 src/web/views/WorkspaceHeader.tsx

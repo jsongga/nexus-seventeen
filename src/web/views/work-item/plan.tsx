@@ -7,7 +7,7 @@ import { Button, FieldLabel, InlineActionErrors, Pill, cn, inputClass } from "..
 import { type DetailedWorkflowPlan } from "../../model/work-item-detail";
 import { planValueLabel, prettyStatus, unknownStateLabel } from "../../model/work-item-labels";
 import { type ActionErrorState } from "../../model/action-errors";
-import type { WorkflowNode } from "../../types";
+import type { BoardRepository, WorkflowNode } from "../../types";
 
 /* —— Plan record and gate —— */
 
@@ -59,7 +59,26 @@ function PlanListSection({ title, items }: { title: string; items: readonly stri
   );
 }
 
-export function PlanRecordDetails({ plan }: { plan: DetailedWorkflowPlan }) {
+export function repositoryTargetLabel(
+  repositories: readonly BoardRepository[],
+  projectId: string | null,
+  repositoryId: string | null | undefined
+): string {
+  if (repositoryId === null || repositoryId === undefined) {
+    const primary = repositories.find((repository) => repository.projectId === projectId && repository.isPrimary);
+    return primary === undefined ? "Inherits the project's primary repository" : `${primary.name} (inherits primary)`;
+  }
+  const repository = repositories.find((candidate) => candidate.id === repositoryId);
+  return repository === undefined ? `${repositoryId} (pinned; name unavailable)` : `${repository.name} (pinned)`;
+}
+
+export function PlanRecordDetails({
+  plan,
+  repositories,
+}: {
+  plan: DetailedWorkflowPlan;
+  repositories: readonly BoardRepository[];
+}) {
   return (
     <div className="rounded-md border border-line bg-card p-3.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -142,6 +161,9 @@ export function PlanRecordDetails({ plan }: { plan: DetailedWorkflowPlan }) {
                     <span className="text-[11px] text-muted">{child.projectId}</span>
                   </div>
                   <p className="mt-1 text-xs font-medium leading-5 text-ink">{child.objective}</p>
+                  <p className="mt-1 text-[11px] leading-5 text-muted">
+                    Repository: {repositoryTargetLabel(repositories, child.projectId, child.repositoryId)}
+                  </p>
                   <PlanListSection title="Declared scope" items={child.declaredScope} />
                   <PlanListSection title="Acceptance criteria" items={child.acceptanceCriteria} />
                   <p className="mt-1 text-[11px] leading-5 text-muted">

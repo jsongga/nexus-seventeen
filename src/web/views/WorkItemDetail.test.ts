@@ -1,9 +1,11 @@
+/** Verifies work-item detail states, labels, and human actions. */
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { Modal } from "../components/ui";
 import type { TaskBoardClient } from "../data/client";
-import type { BoardChildWorkItem, BoardQuestion, BoardTask, BoardWorkItem } from "../types";
+import type { BoardChildWorkItem, BoardQuestion, BoardRepository, BoardTask, BoardWorkItem } from "../types";
 import { WorkItemDetail } from "./WorkItemDetail";
 import { FinalApprovalActions, FinalRejectionForm, WorkItemFooterActions } from "./work-item/approval";
 import { AttestDeploymentForm, ContractAttestationGate } from "./work-item/deployment";
@@ -16,6 +18,24 @@ vi.mock("../components/ui", async (importOriginal) => {
 });
 
 const timestamp = "2026-08-16T00:00:00.000Z";
+const repositories: BoardRepository[] = [
+  {
+    id: "repository-primary",
+    projectId: "project-one",
+    name: "Platform API",
+    path: "/repos/platform-api",
+    isPrimary: true,
+    version: 1,
+  },
+  {
+    id: "repository-web",
+    projectId: "project-one",
+    name: "Platform web",
+    path: "/repos/platform-web",
+    isPrimary: false,
+    version: 2,
+  },
+];
 
 const parkedWorkItem: BoardWorkItem = {
   id: "work-item-one",
@@ -109,14 +129,15 @@ const openQuestion: BoardQuestion = {
   version: 1,
 };
 
-function renderParkedDetail(question: BoardQuestion | null): string {
+function renderParkedDetail(question: BoardQuestion | null, workItem: BoardWorkItem = parkedWorkItem): string {
   const ok = async () => ({ ok: true as const });
   return renderToStaticMarkup(
     createElement(WorkItemDetail, {
-      workItem: parkedWorkItem,
+      workItem,
       snapshotRevision: 1,
       projectName: "Project one",
       projects: [],
+      repositories,
       parentWorkItem: null,
       planningTask,
       openQuestion: question,
@@ -147,6 +168,13 @@ describe("parked work-item detail", () => {
     expect(markup).toContain("Planning needs your input");
     expect(markup).toContain("Which audience should this target?");
     expect(markup).not.toContain("Parked — no open question. Retry or reassign from the task view.");
+  });
+
+  it("names inherited and pinned repository targets", () => {
+    expect(renderParkedDetail(null)).toContain("Platform API (inherits primary)");
+    expect(renderParkedDetail(null, { ...parkedWorkItem, repositoryId: "repository-web" })).toContain(
+      "Platform web (pinned)"
+    );
   });
 });
 
@@ -221,6 +249,7 @@ describe("work-item confirmation surfaces", () => {
         snapshotRevision: 1,
         projectName: "Project one",
         projects: [],
+        repositories,
         parentWorkItem: parkedWorkItem,
         planningTask: null,
         openQuestion: null,
@@ -500,6 +529,7 @@ describe("decomposition detail sections", () => {
           snapshotRevision: 1,
           projectName: "Project one",
           projects: [],
+          repositories,
           parentWorkItem: null,
           planningTask: null,
           openQuestion: null,
@@ -547,6 +577,7 @@ describe("decomposition detail sections", () => {
           snapshotRevision: 1,
           projectName: "Project one",
           projects: [],
+          repositories,
           parentWorkItem: null,
           planningTask: null,
           openQuestion: null,
@@ -577,6 +608,7 @@ describe("decomposition detail sections", () => {
           snapshotRevision: 1,
           projectName: "Project one",
           projects: [],
+          repositories,
           parentWorkItem: null,
           planningTask: null,
           openQuestion: null,
@@ -627,6 +659,7 @@ describe("decomposition detail sections", () => {
         snapshotRevision: 1,
         projectName: "Project one",
         projects: [],
+        repositories,
         parentWorkItem: parkedWorkItem,
         planningTask: null,
         openQuestion: null,
@@ -660,6 +693,7 @@ describe("decomposition detail sections", () => {
         snapshotRevision: 1,
         projectName: "Project one",
         projects: [],
+        repositories,
         parentWorkItem: parkedWorkItem,
         planningTask: null,
         openQuestion: null,

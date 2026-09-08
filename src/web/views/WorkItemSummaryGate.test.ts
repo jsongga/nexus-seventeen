@@ -1,3 +1,5 @@
+/** Verifies summary gates and decomposition-family refresh behavior. */
+
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PipelineSummary } from "@shared/task-board-contract";
@@ -168,6 +170,7 @@ function renderDetail(
     familyRefreshRevision,
     projectName: "Project one",
     projects: [],
+    repositories: [],
     parentWorkItem: null,
     planningTask: null,
     openQuestion: null,

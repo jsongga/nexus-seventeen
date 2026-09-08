@@ -3,17 +3,19 @@
 /* —— Imports —— */
 
 import { Plus } from "lucide-react";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Button, Modal } from "../../components/ui";
 import { ActivityFeed, type ActivityFeedUpdate } from "../ActivityFeed";
 import type { InterruptRunResult, TaskBoardClient } from "../../data/client";
 import { ContextSidebar, type ContextDocument } from "../ContextSidebar";
+import type { ActionResult } from "../../model/action-errors";
 import { parseProjectMetadata, type ProjectMetadataEntry } from "../../model/project-metadata";
 import { ThreadPipelineTable } from "../ThreadPipelineTable";
 import type { BoardProject, BoardSnapshot, ProjectArtifact } from "../../types";
 import { WorkspaceHeader } from "../WorkspaceHeader";
 import { type ProjectUpdate, updatesForProject } from "../../model/workspace-model";
 import { beginArtifactPreviewLoad } from "../../model/artifact-previews";
+import { ProjectRepositories } from "./ProjectRepositories";
 
 /* —— Project page —— */
 
@@ -111,6 +113,8 @@ export function ProjectPage({
   onAddTask,
   client,
   connected,
+  busy,
+  onRepositoryMutation,
 }: {
   project: BoardProject;
   snapshot: BoardSnapshot;
@@ -118,6 +122,8 @@ export function ProjectPage({
   onAddTask: (anchorRef: RefObject<HTMLElement | null>, event: Event) => void;
   client: TaskBoardClient;
   connected: boolean;
+  busy: boolean;
+  onRepositoryMutation: (operation: () => Promise<unknown>) => Promise<ActionResult>;
 }) {
   const [artifacts, setArtifacts] = useState<ProjectArtifact[]>([]);
   const [artifactUrls, setArtifactUrls] = useState<Record<string, string | null>>({});
@@ -165,10 +171,11 @@ export function ProjectPage({
     .sort((left, right) => left.orderKey - right.orderKey || left.id.localeCompare(right.id));
   const agents = snapshot.agents.filter((agent) => agent.projectId === project.id);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-  const documents = contextDocuments([
-    { key: "repository", label: "Repository", kind: "workspace", value: project.repoPath, href: null },
-    ...metadata.entries,
-  ]);
+  const documents = contextDocuments([...metadata.entries]);
+  const repositories = useMemo(
+    () => snapshot.repositories.filter((repository) => repository.projectId === project.id),
+    [project.id, snapshot.repositories]
+  );
   const feedUpdates = activityUpdates(updates, artifacts);
   const activeRuns = snapshot.runs.filter(
     (run) =>
@@ -245,6 +252,14 @@ export function ProjectPage({
             orderStorageKey={`nexus-seventeen:project-resources:${project.id}`}
           />
           <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-6 overflow-hidden p-4 sm:gap-8 sm:p-8">
+            <ProjectRepositories
+              projectId={project.id}
+              repositories={repositories}
+              client={client}
+              connected={connected}
+              busy={busy}
+              onMutation={onRepositoryMutation}
+            />
             <ThreadPipelineTable tasks={tasks} agentById={agentById} onTask={onTask} />
             <div className="flex min-h-0 flex-1 flex-col">
               <ActivityFeed updates={feedUpdates} artifactUrls={artifactUrls} onOpenArtifact={openArtifact} />

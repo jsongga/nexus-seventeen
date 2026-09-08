@@ -1,3 +1,5 @@
+/** Coordinates task-board loading, navigation, mutations, and page rendering. */
+
 import { ArrowLeft, CircleAlert, CirclePause, FolderKanban, ListTodo, Plus, RefreshCw } from "lucide-react";
 import {
   useCallback,
@@ -883,6 +885,8 @@ export function BoardApp() {
         snapshot={snapshot}
         client={client}
         connected={connected}
+        busy={busy}
+        onRepositoryMutation={mutateWorkItemDetail}
         onTask={openTask}
         onAddTask={(anchor, event) => openDialog("task", { anchor, projectId: pageProject.id }, event)}
       />
@@ -1173,6 +1177,7 @@ export function BoardApp() {
                     snapshot.projects.find((project) => project.id === selectedWorkItem.resolvedProjectId)?.name ?? null
                   }
                   projects={snapshot.projects}
+                  repositories={snapshot.repositories}
                   parentWorkItem={
                     selectedWorkItem.parentWorkItemId === null
                       ? null

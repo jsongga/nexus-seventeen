@@ -1,12 +1,41 @@
+/** Verifies plan records and their human confirmation controls. */
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { runWorkItemDetailMutation } from "../BoardApp";
 import { BoardApiError } from "../data/client";
 import type { DetailedWorkflowPlan } from "../model/work-item-detail";
+import type { BoardRepository } from "../types";
 import { PlanApprovalActions, PlanRecordDetails, PlanRejectionForm } from "./work-item/plan";
 
 const timestamp = "2026-08-19T12:00:00.000Z";
+const repositories: BoardRepository[] = [
+  {
+    id: "provider-primary",
+    projectId: "provider-project",
+    name: "Provider API",
+    path: "/repos/provider-api",
+    isPrimary: true,
+    version: 1,
+  },
+  {
+    id: "provider-contracts",
+    projectId: "provider-project",
+    name: "Provider contracts",
+    path: "/repos/provider-contracts",
+    isPrimary: false,
+    version: 2,
+  },
+  {
+    id: "consumer-primary",
+    projectId: "consumer-project",
+    name: "Consumer web",
+    path: "/repos/consumer-web",
+    isPrimary: true,
+    version: 1,
+  },
+];
 
 function plan(tier: "standard" | "hazardous" = "standard"): DetailedWorkflowPlan {
   return {
@@ -44,7 +73,7 @@ function plan(tier: "standard" | "hazardous" = "standard"): DetailedWorkflowPlan
 
 describe("plan approval record and controls", () => {
   it("renders every optional plan-record section and its badges", () => {
-    const markup = renderToStaticMarkup(createElement(PlanRecordDetails, { plan: plan() }));
+    const markup = renderToStaticMarkup(createElement(PlanRecordDetails, { plan: plan(), repositories }));
 
     for (const text of [
       "Feature",
@@ -87,6 +116,7 @@ describe("plan approval record and controls", () => {
   it("renders declared children and the phased merge authorization at the plan gate", () => {
     const markup = renderToStaticMarkup(
       createElement(PlanRecordDetails, {
+        repositories,
         plan: {
           ...plan(),
           changeShape: "blast_radius",
@@ -95,6 +125,7 @@ describe("plan approval record and controls", () => {
               key: "expand-provider",
               objective: "Publish the additive provider interface.",
               projectId: "provider-project",
+              repositoryId: "provider-contracts",
               declaredScope: ["docs/interface.md"],
               acceptanceCriteria: ["The interface is published."],
               phase: "expand",
@@ -120,6 +151,8 @@ describe("plan approval record and controls", () => {
       "Expand",
       "Migrate",
       "provider-project",
+      "Provider contracts (pinned)",
+      "Consumer web (inherits primary)",
       "Declared scope",
       "docs/interface.md",
       "src/consumer",

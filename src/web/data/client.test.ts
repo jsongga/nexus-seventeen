@@ -1,3 +1,5 @@
+/** Verifies the browser client's transport, validation, and response projections. */
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TASK_MESSAGE_PAGE_SIZE } from "@shared/task-board-contract";
 import {
@@ -38,6 +40,17 @@ const project = {
   version: 1,
   createdAt: "2026-07-19T10:00:00.000Z",
   updatedAt: "2026-07-19T10:15:00.000Z",
+};
+const repository = {
+  apiVersion,
+  repositoryId: "repository-one",
+  projectId: project.projectId,
+  name: "Cicada platform",
+  path: project.repoPath,
+  isPrimary: true,
+  version: 1,
+  createdAt: project.createdAt,
+  updatedAt: project.updatedAt,
 };
 const workItem = {
   apiVersion,
@@ -1613,6 +1626,57 @@ describe("task-board HTTP client", () => {
           description: updated.description,
           repoPath: updated.repoPath,
         }),
+      })
+    );
+  });
+
+  it("adds a repository and parses the repository response envelope", async () => {
+    const added = {
+      ...repository,
+      repositoryId: "repository-consumer",
+      name: "Consumer",
+      path: "/repos/consumer",
+      isPrimary: false,
+    };
+    const request = vi.fn(async () => new Response(JSON.stringify({ repository: added })));
+    const client = createTaskBoardClient({
+      baseUrl: "https://board.example.test",
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(client.addRepository(project.projectId, { name: added.name, path: added.path })).resolves.toEqual({
+      id: added.repositoryId,
+      projectId: added.projectId,
+      name: added.name,
+      path: added.path,
+      isPrimary: false,
+      version: 1,
+    });
+    expect(request).toHaveBeenCalledWith(
+      `https://board.example.test/v1/projects/${project.projectId}/repositories`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: added.name, path: added.path }),
+      })
+    );
+  });
+
+  it("updates a repository with its version and parses the repository response envelope", async () => {
+    const updated = { ...repository, name: "Platform API", version: 2 };
+    const request = vi.fn(async () => new Response(JSON.stringify({ repository: updated })));
+    const client = createTaskBoardClient({
+      baseUrl: "https://board.example.test",
+      fetch: request as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.updateRepository(repository.repositoryId, { version: repository.version, name: updated.name })
+    ).resolves.toMatchObject({ name: updated.name, version: 2 });
+    expect(request).toHaveBeenCalledWith(
+      `https://board.example.test/v1/repositories/${repository.repositoryId}`,
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ version: repository.version, name: updated.name }),
       })
     );
   });

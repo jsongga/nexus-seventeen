@@ -2,13 +2,20 @@
 
 /* —— Imports —— */
 
-import type { PipelineSummary, RejectPlanRevisionResponse } from "@shared/task-board-contract";
+import type {
+  CreateRepositoryRequest,
+  PipelineSummary,
+  RejectPlanRevisionResponse,
+  UpdateRepositoryRequest,
+} from "@shared/task-board-contract";
+import { parseRepositoryEntity } from "@shared/task-board-contract/validate";
 import type {
   AgentQueryConversationTurn,
   AgentRole,
   AutomationConfiguration,
   BoardChildWorkItem,
   BoardProject,
+  BoardRepository,
   BoardSnapshot,
   BoardWorkItemDependency,
   BoardWorkItemDetail,
@@ -157,6 +164,8 @@ export interface TaskBoardClient {
   saveAutomationConfiguration(input: SaveAutomationConfigurationInput): Promise<AutomationConfiguration>;
   createProject(input: CreateProjectInput): Promise<BoardProject>;
   updateProject(projectId: string, input: UpdateProjectInput): Promise<BoardProject>;
+  addRepository(projectId: string, input: CreateRepositoryRequest): Promise<BoardRepository>;
+  updateRepository(repositoryId: string, input: UpdateRepositoryRequest): Promise<BoardRepository>;
   getHostProjectRoots(signal?: AbortSignal): Promise<HostProjectRoot[]>;
   getHostDirectories(path?: string, signal?: AbortSignal): Promise<HostDirectoryListing>;
   createWorkItem(input: CreateWorkItemInput): Promise<BoardWorkItemDetail>;
@@ -228,6 +237,19 @@ async function errorDetails(response: Response): Promise<{ message: string; code
 
 function clientEventId(): string {
   return `ui-${randomUuid()}`;
+}
+
+function repositoryFromEnvelope(value: unknown, path: string): BoardRepository {
+  const envelope = record(value, path);
+  const repository = parseRepositoryEntity(envelope.repository, `${path}.repository`);
+  return {
+    id: repository.repositoryId,
+    projectId: repository.projectId,
+    name: repository.name,
+    path: repository.path,
+    isPrimary: repository.isPrimary,
+    version: repository.version,
+  };
 }
 
 // Remote boards require HTTPS; plain HTTP is accepted only for loopback development.
@@ -627,6 +649,24 @@ export function createTaskBoardClient(
           body: JSON.stringify(input),
         }),
         "update project response"
+      );
+    },
+    async addRepository(projectId, input) {
+      return repositoryFromEnvelope(
+        await json(`/v1/projects/${encodeURIComponent(projectId)}/repositories`, {
+          method: "POST",
+          body: JSON.stringify(input),
+        }),
+        "add repository response"
+      );
+    },
+    async updateRepository(repositoryId, input) {
+      return repositoryFromEnvelope(
+        await json(`/v1/repositories/${encodeURIComponent(repositoryId)}`, {
+          method: "PATCH",
+          body: JSON.stringify(input),
+        }),
+        "update repository response"
       );
     },
     async getHostProjectRoots(signal) {
