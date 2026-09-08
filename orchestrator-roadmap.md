@@ -177,8 +177,8 @@ arc is intermittent under load too (0/5 failures isolated, 1/3 loaded). Make the
 observed sweep latency (or gate on state transitions instead of elapsed
 time) so a loaded machine cannot fake a regression.
 
-**9.9. Repository identity separate from the product project** _(specced
-2026-09-06 as campaign 16; spec
+**9.9. Repository identity separate from the product project** _(shipped
+2026-09-08 as campaign 16; spec
 `docs/superpowers/specs/2026-09-06-repository-identity.md`)_ — a Project has
 exactly one `repo_path` and a declared child targets a Project, so the unit of
 grouping and the unit of checkout are the same thing. A product whose code spans
@@ -313,7 +313,7 @@ components changes when it resets, and a `useEffect` dependency array can start
 firing on a different schedule. Own review budget, own Playwright arcs.
 Exit: the audit's original bar — no file in `src/web` over ~600 lines.
 
-**17. Repository-aware agent identity** _(specced 2026-09-07 as campaign 18;
+**17. Repository-aware agent identity** _(shipped 2026-09-08 as campaign 18;
 spec `docs/superpowers/specs/2026-09-07-repository-aware-agents.md`; found by
 campaign 16's exit arc)_ — campaign 16 gives a work item a repository on the board side,
 and the worker side cannot honour it. A worker's repository comes from its own
@@ -343,6 +343,17 @@ caching invisibly rather than failing to compile. Same reason campaign 14 exists
 different technique — a context object, not custom hooks.
 
 ## Migration risks
+
+- **Upgrade order, v26 → v28 (campaigns 16 and 18)**: these are **additive**, so
+  **the board upgrades first and workers may lag**. This is the opposite of
+  campaign 10's v18 → v26, which required workers first — an operator following
+  that older instruction here would be sequencing for no reason. v27 keeps
+  `projects.repo_path` as a maintained mirror of the primary repository
+  precisely so a v26 worker still resolves a checkout; dropping it is a later
+  version's job, once no supported worker reads it. v28 adds
+  `agents.repository_id`, where **null means the project's primary repository,
+  never "any"** — so every pre-existing agent keeps serving exactly the tree it
+  served before.
 
 - **State-machine cutover (campaign 1)** is the contract quake: enums, SQL
   CHECKs, schemas, web, worker, fixtures all move together (single-sourced,
