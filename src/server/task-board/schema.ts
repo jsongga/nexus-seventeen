@@ -13,6 +13,7 @@ import {
   parseBoardCreateRepository,
   parseBoardCreateProject,
   parseBoardUpdateProject,
+  parseBoardUpdateRepository,
   parseBoardCreateTask,
   parseBoardCreateTaskPhase,
   parseBoardCreateWorkItem,
@@ -48,6 +49,7 @@ import type {
   CreateHumanTaskMessageRequest,
   CreateProjectRequest,
   UpdateProjectRequest,
+  UpdateRepositoryRequest,
   CreateTaskMessageRequest,
   CreateTaskPhaseRequest,
   CreateTaskRequest,
@@ -90,6 +92,9 @@ export function parseCreateProject(value: unknown): CreateProjectRequest {
 }
 export function parseUpdateProject(value: unknown): UpdateProjectRequest {
   return adapt(() => parseBoardUpdateProject(value));
+}
+export function parseUpdateRepository(value: unknown): UpdateRepositoryRequest {
+  return adapt(() => parseBoardUpdateRepository(value));
 }
 export function parseConfirmPlanRevisionRequest(value: unknown): ConfirmPlanRevisionRequest {
   return adapt(() => parseBoardConfirmPlan(value));

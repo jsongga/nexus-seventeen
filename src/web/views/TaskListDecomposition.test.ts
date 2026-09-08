@@ -26,6 +26,7 @@ function workItem(id: string, overrides: Partial<BoardWorkItem> = {}): BoardWork
     taskType: "standard",
     projectTarget: { mode: "explicit", projectId: project.id },
     resolvedProjectId: project.id,
+    repositoryId: null,
     parentWorkItemId: null,
     phase: null,
     childOrdinal: null,

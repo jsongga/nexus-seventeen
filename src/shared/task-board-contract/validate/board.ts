@@ -29,6 +29,7 @@ import {
   parseInterruptEntity,
   parseProjectEntity,
   parseQuestionEntity,
+  parseRepositoryEntity,
   parseRunEntity,
   parseTaskEntity,
   shape,
@@ -258,6 +259,7 @@ export function parseBoardSnapshotEntity(value: unknown, options: ShapeParserOpt
   const fields = [
     "apiVersion",
     "project",
+    "repositories",
     "agents",
     "tasks",
     "openQuestions",
@@ -266,11 +268,18 @@ export function parseBoardSnapshotEntity(value: unknown, options: ShapeParserOpt
     "recentInterrupts",
     "recentEvents",
   ];
-  const required = fields.filter((field) => field !== "recentQuestions");
+  const required = fields.filter((field) => field !== "recentQuestions" && field !== "repositories");
   const item = entity(value, "board", fields, required, options);
   return Object.freeze({
     apiVersion: TASK_BOARD_API_VERSION,
     project: parseProjectEntity(item.project, "board.project", options),
+    repositories: Object.freeze(
+      item.repositories === undefined
+        ? []
+        : arrayOf(item.repositories, "board.repositories", (entry, label) =>
+            parseRepositoryEntity(entry, label, options)
+          )
+    ),
     agents: Object.freeze(
       arrayOf(item.agents, "board.agents", (entry, label) => parseAgentEntity(entry, label, options))
     ),

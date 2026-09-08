@@ -35,12 +35,14 @@ import {
   exact,
   identifier,
   parseBoardAutomationUpdate,
+  parseBoardSnapshotEntity,
   parseBoardClaim,
   parseBoardCreateAgent,
   parseBoardCreateTaskPhase,
   parseBoardCreateWorkItem,
   parseBoardIdentifier,
   parseBoardSettle,
+  parseBoardUpdateRepository,
   parseBoardUpdateTask,
   parseBoardUpdateTaskPhase,
   parseClaimRunResult,
@@ -119,6 +121,30 @@ function workItemEntity(state: string): Record<string, unknown> {
     endedAt: null,
     cancelledReason: null,
     archivedAt: null,
+  };
+}
+
+function boardSnapshotEntity(repositories?: readonly Record<string, unknown>[]): Record<string, unknown> {
+  return {
+    apiVersion: TASK_BOARD_API_VERSION,
+    project: {
+      apiVersion: TASK_BOARD_API_VERSION,
+      projectId: "project-one",
+      name: "One product",
+      description: "A product spanning repositories.",
+      repoPath: "/repos/primary",
+      version: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+    ...(repositories === undefined ? {} : { repositories }),
+    agents: [],
+    tasks: [],
+    openQuestions: [],
+    recentQuestions: [],
+    recentRuns: [],
+    recentInterrupts: [],
+    recentEvents: [],
   };
 }
 
@@ -555,6 +581,57 @@ test("the browser profile buckets state enums and preserves unknown work-item ta
         browserProfile
       ),
     /priority has an unsupported value/u
+  );
+});
+
+test("work-item repository identity distinguishes inherited and pinned repositories", () => {
+  assert.equal(parseWorkItemEntity(workItemEntity("queued"), "workItems[0]").repositoryId, null);
+  assert.equal(
+    parseWorkItemEntity({ ...workItemEntity("queued"), repositoryId: "repository-consumer" }, "workItems[0]")
+      .repositoryId,
+    "repository-consumer"
+  );
+  assert.throws(
+    () => parseWorkItemEntity({ ...workItemEntity("queued"), repositoryId: 12 }, "workItems[0]"),
+    /repositoryId/u
+  );
+});
+
+test("board snapshots parse repositories while legacy snapshots default to an empty list", () => {
+  const repository = {
+    apiVersion: TASK_BOARD_API_VERSION,
+    repositoryId: "repository-primary",
+    projectId: "project-one",
+    name: "primary",
+    path: "/repos/primary",
+    isPrimary: true,
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  assert.deepEqual(parseBoardSnapshotEntity(boardSnapshotEntity([repository])).repositories, [repository]);
+  assert.deepEqual(parseBoardSnapshotEntity(boardSnapshotEntity()).repositories, []);
+  assert.throws(
+    () => parseBoardSnapshotEntity(boardSnapshotEntity([{ ...repository, isPrimary: "yes" }])),
+    /board\.repositories\[0\]\.isPrimary/u
+  );
+});
+
+test("repository updates require a version and at least one mutable field", () => {
+  assert.deepEqual(parseBoardUpdateRepository({ version: 2, name: "consumer" }), {
+    version: 2,
+    name: "consumer",
+  });
+  assert.deepEqual(parseBoardUpdateRepository({ version: 3, path: "/repos/consumer-new" }), {
+    version: 3,
+    path: "/repos/consumer-new",
+  });
+  assert.throws(() => parseBoardUpdateRepository({ version: 1 }), /must include name or path/u);
+  assert.throws(() => parseBoardUpdateRepository({ name: "consumer" }), /missing fields/u);
+  assert.throws(() => parseBoardUpdateRepository({ version: 1, path: "repos/consumer" }), /absolute path/u);
+  assert.throws(
+    () => parseBoardUpdateRepository({ version: 1, name: "consumer", isPrimary: true }),
+    /unexpected or missing fields/u
   );
 });
 

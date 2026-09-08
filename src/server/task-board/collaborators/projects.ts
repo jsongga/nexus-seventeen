@@ -19,6 +19,7 @@ import {
   type CreateProjectRequest,
   type CreateRepositoryRequest,
   type UpdateProjectRequest,
+  type UpdateRepositoryRequest,
   type Project,
   type ProjectArtifact,
   type ProjectEvent,
@@ -84,7 +85,7 @@ import {
   resolvePipelineBranchTip,
   type MergePipelineResult,
 } from "./merge-executor.js";
-import { TaskBoardError } from "../errors.js";
+import { conflict, TaskBoardError } from "../errors.js";
 import {
   decompositionFamilyTouchesProjectSql,
   decompositionReadinessBlocker,
@@ -1307,6 +1308,66 @@ export class ProjectsCollaborator {
     const row = this.runtime.store.db.prepare("SELECT * FROM repositories WHERE repository_id=?").get(repositoryId);
     if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:repository_missing_after_insert");
     return repositoryFromRow(row);
+  }
+
+  updateRepository(repositoryId: string, request: UpdateRepositoryRequest): Repository {
+    const now = exactNow(this.runtime.config.now);
+    return this.runtime.store.transaction(() => {
+      const currentRow = this.runtime.store.db
+        .prepare("SELECT * FROM repositories WHERE repository_id=?")
+        .get(repositoryId);
+      if (currentRow === undefined) {
+        throw new TaskBoardError(404, "REPOSITORY_NOT_FOUND", "Repository was not found");
+      }
+      const current = repositoryFromRow(currentRow);
+      if (current.version !== request.version) {
+        throw conflict("REPOSITORY_VERSION_CONFLICT", "Repository version changed");
+      }
+      const update = this.runtime.store.db
+        .prepare(
+          `
+        UPDATE repositories
+        SET name=COALESCE(?, name), path=COALESCE(?, path), version=version+1, updated_at=?
+        WHERE repository_id=? AND version=?
+      `
+        )
+        .run(request.name ?? null, request.path ?? null, now, repositoryId, request.version);
+      if (Number(update.changes) !== 1) {
+        throw conflict("REPOSITORY_VERSION_CONFLICT", "Repository version changed");
+      }
+      if (current.isPrimary && request.path !== undefined) {
+        const projectUpdate = this.runtime.store.db
+          .prepare(
+            `
+          UPDATE projects
+          SET repo_path=?, version=version+1, updated_at=?
+          WHERE project_id=?
+        `
+          )
+          .run(request.path, now, current.projectId);
+        if (Number(projectUpdate.changes) !== 1) {
+          throw new Error("TASK_BOARD_DATABASE_CORRUPT:repository_project");
+        }
+      }
+      this.runtime.insertEvent(
+        current.projectId,
+        null,
+        { type: "human", id: this.runtime.config.humanPrincipal },
+        "repository_updated",
+        {
+          repositoryId,
+          fields: Object.keys(request)
+            .filter((field) => field !== "version")
+            .sort(),
+        },
+        now
+      );
+      const updatedRow = this.runtime.store.db
+        .prepare("SELECT * FROM repositories WHERE repository_id=?")
+        .get(repositoryId);
+      if (updatedRow === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:repository_missing_after_update");
+      return repositoryFromRow(updatedRow);
+    });
   }
 
   updateProject(projectId: string, request: UpdateProjectRequest): Project {

@@ -435,6 +435,7 @@ export function parseWorkItemEntity(
     "taskType",
     "projectTarget",
     "resolvedProjectId",
+    "repositoryId",
     "parentWorkItemId",
     "phase",
     "childOrdinal",
@@ -462,6 +463,7 @@ export function parseWorkItemEntity(
     "stateSince",
     "reviewRound",
     "heartbeatAt",
+    "repositoryId",
     ...(options.projection === "browser" ? ["parentWorkItemId", "phase", "childOrdinal"] : []),
   ]);
   const required = fields.filter((field) => !optional.has(field));
@@ -506,6 +508,8 @@ export function parseWorkItemEntity(
     taskType,
     projectTarget,
     resolvedProjectId,
+    repositoryId:
+      item.repositoryId === undefined ? null : nullableIdentifier(item.repositoryId, `${label}.repositoryId`, options),
     parentWorkItemId:
       item.parentWorkItemId === undefined
         ? null

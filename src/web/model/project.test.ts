@@ -49,6 +49,7 @@ function runEvent(eventId: string, createdAt: string, taskId: string | null, dat
 function normalizeRuns(events: RawEvent[], runs: RawRun[] = [tasklessRun]) {
   const board: RawBoard = {
     project,
+    repositories: [],
     agents: [],
     tasks: [],
     questions: [],
@@ -64,6 +65,7 @@ describe("run/event projection", () => {
     const versionedProject = { ...project, version: 7 };
     const board: RawBoard = {
       project: versionedProject,
+      repositories: [],
       agents: [],
       tasks: [],
       questions: [],

@@ -44,6 +44,7 @@ import {
   type TaskStatus,
   type UpdateAutomationConfigurationRequest,
   type UpdateProjectRequest,
+  type UpdateRepositoryRequest,
   type UpdateTaskPhaseRequest,
   type UpdateTaskRequest,
   type UpdateWorkItemRequest,
@@ -145,10 +146,14 @@ export function parseBoardCreateProject(value: unknown): CreateProjectRequest {
   });
 }
 
+function boardAbsolutePath(value: unknown, field: string, maximum: number): string {
+  const path = boardText(value, field, maximum);
+  if (!path.startsWith("/")) boardFailure(`${field} must be an absolute path`);
+  return path;
+}
+
 function boardRepoPath(value: unknown): string {
-  const repoPath = boardText(value, "repoPath", 8_000);
-  if (!repoPath.startsWith("/")) boardFailure("repoPath must be an absolute path");
-  return repoPath;
+  return boardAbsolutePath(value, "repoPath", 8_000);
 }
 
 export function parseBoardUpdateProject(value: unknown): UpdateProjectRequest {
@@ -422,7 +427,20 @@ export function parseBoardCreateRepository(value: unknown): CreateRepositoryRequ
   const item = boardExact(value, ["name", "path"], "Repository");
   return Object.freeze({
     name: boardText(item.name, "name", 256),
-    path: boardText(item.path, "path", 4_000),
+    path: boardAbsolutePath(item.path, "path", 4_000),
+  });
+}
+
+export function parseBoardUpdateRepository(value: unknown): UpdateRepositoryRequest {
+  const raw = record(value, "Repository update");
+  const fields = ["name", "path"].filter((field) => field in raw);
+  if (fields.length === 0) boardFailure("Repository update must include name or path");
+  const item = boardExact(value, ["version", ...fields], "Repository update");
+  const path = item.path === undefined ? undefined : boardAbsolutePath(item.path, "path", 4_000);
+  return Object.freeze({
+    version: boardPositiveVersion(item.version),
+    ...(item.name === undefined ? {} : { name: boardText(item.name, "name", 256) }),
+    ...(path === undefined ? {} : { path }),
   });
 }
 

@@ -96,6 +96,7 @@ const oldWorkItem: WorkItem = {
   taskType: "standard",
   projectTarget: { mode: "explicit", projectId: "project-one" },
   resolvedProjectId: "project-one",
+  repositoryId: null,
   parentWorkItemId: null,
   phase: null,
   childOrdinal: null,

@@ -126,6 +126,7 @@ export {
   parseBoardRotateAgentToken,
   parseBoardSettle,
   parseBoardUpdateProject,
+  parseBoardUpdateRepository,
   parseBoardUpdateTask,
   parseBoardUpdateTaskPhase,
   parseBoardUpdateWorkItem,

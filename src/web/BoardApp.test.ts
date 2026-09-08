@@ -95,6 +95,7 @@ describe("board pause refresh coordination", () => {
       generatedAt,
       generatedAtMs: Date.parse(generatedAt),
       projects: [],
+      repositories: [],
       agents: [],
       tasks: [],
       messages: [],

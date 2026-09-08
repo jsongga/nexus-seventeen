@@ -32,6 +32,7 @@ import {
   type CreateProjectRequest,
   type CreateRepositoryRequest,
   type UpdateProjectRequest,
+  type UpdateRepositoryRequest,
   type CreateTaskMessageRequest,
   type CreateTaskPhaseRequest,
   type CreateTaskRequest,
@@ -431,6 +432,10 @@ export class TaskBoard {
     return this.#projects.addRepository(projectId, request);
   }
 
+  updateRepository(repositoryId: string, request: UpdateRepositoryRequest): Repository {
+    return this.#projects.updateRepository(repositoryId, request);
+  }
+
   updateProject(projectId: string, request: UpdateProjectRequest): Project {
     return this.#projects.updateProject(projectId, request);
   }
@@ -560,6 +565,7 @@ export class TaskBoard {
     return Object.freeze({
       apiVersion: TASK_BOARD_API_VERSION,
       project,
+      repositories: this.#projects.listRepositories(projectId),
       agents: Object.freeze(
         this.#runtime.store.db
           .prepare("SELECT * FROM agents WHERE project_id = ? ORDER BY created_at, agent_id")

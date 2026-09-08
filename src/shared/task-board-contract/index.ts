@@ -585,6 +585,8 @@ export interface WorkItem {
   readonly taskType: WorkItemTaskType;
   readonly projectTarget: WorkItemProjectTarget;
   readonly resolvedProjectId: string | null;
+  /** Null inherits the resolved project's primary repository; a value pins this work item. */
+  readonly repositoryId: string | null;
   readonly parentWorkItemId: string | null;
   readonly phase: WorkItemPhase | null;
   readonly childOrdinal: number | null;
@@ -1168,6 +1170,7 @@ export interface RunInterruptBatch {
 export interface BoardSnapshot {
   readonly apiVersion: typeof TASK_BOARD_API_VERSION;
   readonly project: Project;
+  readonly repositories: readonly Repository[];
   readonly agents: readonly AgentProfile[];
   readonly tasks: readonly BoardTask[];
   readonly openQuestions: readonly HumanQuestion[];
@@ -1256,6 +1259,12 @@ export interface CreateProjectRequest {
 export interface CreateRepositoryRequest {
   readonly name: string;
   readonly path: string;
+}
+
+export interface UpdateRepositoryRequest {
+  readonly version: number;
+  readonly name?: string;
+  readonly path?: string;
 }
 
 export interface UpdateProjectRequest {

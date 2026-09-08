@@ -23,6 +23,7 @@ import type {
 } from "../../types";
 import {
   projectAgent,
+  projectRepository,
   projectEvent,
   projectInterrupt,
   projectProject,
@@ -175,6 +176,7 @@ export function parseRawBoard(value: unknown): RawBoard {
   for (const question of open) questions.set(question.questionId, question);
   return {
     project: projectProject(item.project),
+    repositories: item.repositories.map(projectRepository),
     agents: item.agents.map(projectAgent),
     tasks: item.tasks.map(projectTask),
     questions: [...questions.values()],

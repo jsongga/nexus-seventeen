@@ -4,7 +4,7 @@ import test from "node:test";
 import { ContractValidationError, TASK_BOARD_API_VERSION } from "#shared/task-board-contract";
 import { parseRepositoryEntity } from "#shared/task-board-contract/validate";
 import { TaskBoard } from "#server/task-board";
-import { repositoryFromRow } from "#server/task-board/persistence/rows";
+import { repositoryFromRow, workItemFromRow } from "#server/task-board/persistence/rows";
 import { TaskBoardStore } from "#server/task-board/persistence/store";
 import { config, databasePath } from "./helpers.js";
 
@@ -55,6 +55,38 @@ test("repository rows project and parse as the shared Repository entity", () => 
       error instanceof ContractValidationError && error.message === "repository.isPrimary must be a boolean"
   );
   assert.throws(() => repositoryFromRow({ ...row, is_primary: 2 }), /TASK_BOARD_DATABASE_CORRUPT:is_primary/u);
+});
+
+test("work-item rows preserve null inheritance and explicit repository pins", () => {
+  const row = {
+    work_item_id: "work-item-one",
+    original_request: "Update the consumer.",
+    refined_objective: null,
+    priority: "normal",
+    task_type: "standard",
+    project_target_mode: "explicit",
+    target_project_id: "project-one",
+    resolved_project_id: "project-one",
+    repository_id: null,
+    parent_work_item_id: null,
+    phase: null,
+    child_ordinal: null,
+    planning_task_id: null,
+    pipeline_branch: null,
+    base_sha: null,
+    state: "queued",
+    current_stage: "refinement",
+    created_by: "human:operator",
+    version: 1,
+    created_at: NOW,
+    updated_at: NOW,
+    ended_at: null,
+    cancelled_reason: null,
+    archived_at: null,
+  };
+
+  assert.equal(workItemFromRow(row).repositoryId, null);
+  assert.equal(workItemFromRow({ ...row, repository_id: "repository-consumer" }).repositoryId, "repository-consumer");
 });
 
 test("opening v27 reconciles a project-only v26-era write from repo_path", async () => {

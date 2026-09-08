@@ -5,6 +5,7 @@
 import type {
   AgentInterrupt,
   AgentProfile,
+  Repository,
   AgentRun,
   BoardPause,
   HumanQuestion,
@@ -98,6 +99,8 @@ export type RawBoardPause = WithMs<BoardPause, "updatedAt">;
 
 export type RawAgent = WithMs<WithoutApi<AgentProfile>, "createdAt">;
 
+export type RawRepository = WithMs<WithMs<WithoutApi<Repository>, "createdAt">, "updatedAt">;
+
 export type RawTaskPhase = WithMs<
   WithMs<WithNullableMs<WithNullableMs<WithoutApi<TaskPhase>, "startedAt">, "endedAt">, "createdAt">,
   "updatedAt"
@@ -147,6 +150,7 @@ export type RawMessage = WithMs<Omit<WithoutApi<TaskMessage>, "runId">, "created
 
 export interface RawBoard {
   project: RawProject;
+  repositories: RawRepository[];
   agents: RawAgent[];
   tasks: RawTask[];
   questions: RawQuestion[];

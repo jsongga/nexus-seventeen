@@ -6,6 +6,7 @@ import { GIT_OBJECT_ID_PATTERN } from "@shared/task-board-contract";
 import type {
   AgentInterrupt,
   AgentProfile,
+  Repository,
   AgentRun,
   HumanQuestion,
   Project,
@@ -50,6 +51,7 @@ import { parkCategories } from "../wire";
 import { identifier, loose, member, ms, nullableMs, withoutApiVersion } from "./scalars";
 import {
   type RawAgent,
+  type RawRepository,
   type RawBoardNotification,
   type RawBoardPause,
   type RawChildWorkItem,
@@ -143,6 +145,10 @@ export function parseWorkItemDetail(value: unknown, path: string): RawWorkItemDe
 
 export function projectAgent(item: AgentProfile): RawAgent {
   return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt) };
+}
+
+export function projectRepository(item: Repository): RawRepository {
+  return { ...withoutApiVersion(item), createdAtMs: ms(item.createdAt), updatedAtMs: ms(item.updatedAt) };
 }
 
 export function parseAgent(value: unknown, path: string): RawAgent {

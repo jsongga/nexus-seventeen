@@ -1815,8 +1815,9 @@ test("repositories are human-only, listed primary first, and creatable over HTTP
       { name: "consumer", path: "/var/lib/steward/repos/consumer" }
     );
     assert.equal(addResponse.status, 201);
-    const added = ((await addResponse.json()) as { repository: { repositoryId: string; isPrimary: boolean } })
-      .repository;
+    const added = (
+      (await addResponse.json()) as { repository: { repositoryId: string; isPrimary: boolean; version: number } }
+    ).repository;
     assert.equal(added.isPrimary, false);
 
     const after = (await (
@@ -1860,6 +1861,229 @@ test("repositories are human-only, listed primary first, and creatable over HTTP
       ).status,
       401
     );
+    assert.equal(
+      (
+        await request(address.url, `/v1/repositories/${added.repositoryId}`, "PATCH", agentToken, {
+          version: added.version,
+          name: "sneaky rename",
+        })
+      ).status,
+      401
+    );
+  } finally {
+    await service.close();
+  }
+});
+
+test("repository PATCH renames and re-points with optimistic concurrency", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    port: 0,
+    reconcileIntervalSeconds: 0,
+  });
+  const address = await service.start();
+  try {
+    const created = (
+      (await (
+        await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+          name: "Repository maintenance",
+          description: "Rename and re-point repositories without changing primacy.",
+          repoPath: "/var/lib/steward/repos/primary-old",
+        })
+      ).json()) as { project: { projectId: string } }
+    ).project;
+    const primary = (
+      (await (
+        await request(address.url, `/v1/projects/${created.projectId}/repositories`, "GET", HUMAN_TOKEN)
+      ).json()) as { repositories: readonly { repositoryId: string; version: number }[] }
+    ).repositories[0]!;
+    const secondary = (
+      (await (
+        await request(address.url, `/v1/projects/${created.projectId}/repositories`, "POST", HUMAN_TOKEN, {
+          name: "consumer-old",
+          path: "/var/lib/steward/repos/consumer",
+        })
+      ).json()) as { repository: { repositoryId: string; version: number } }
+    ).repository;
+
+    const renamedResponse = await request(
+      address.url,
+      `/v1/repositories/${secondary.repositoryId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      { version: secondary.version, name: "consumer" }
+    );
+    assert.equal(renamedResponse.status, 200);
+    const renamed = (
+      (await renamedResponse.json()) as {
+        repository: { repositoryId: string; name: string; path: string; isPrimary: boolean; version: number };
+      }
+    ).repository;
+    assert.deepEqual(
+      {
+        repositoryId: renamed.repositoryId,
+        name: renamed.name,
+        path: renamed.path,
+        isPrimary: renamed.isPrimary,
+        version: renamed.version,
+      },
+      {
+        repositoryId: secondary.repositoryId,
+        name: "consumer",
+        path: "/var/lib/steward/repos/consumer",
+        isPrimary: false,
+        version: secondary.version + 1,
+      }
+    );
+
+    const repointedResponse = await request(
+      address.url,
+      `/v1/repositories/${primary.repositoryId}`,
+      "PATCH",
+      HUMAN_TOKEN,
+      { version: primary.version, path: "/var/lib/steward/repos/primary-new" }
+    );
+    assert.equal(repointedResponse.status, 200);
+    const repointed = (
+      (await repointedResponse.json()) as {
+        repository: { repositoryId: string; path: string; isPrimary: boolean; version: number };
+      }
+    ).repository;
+    assert.deepEqual(
+      {
+        repositoryId: repointed.repositoryId,
+        path: repointed.path,
+        isPrimary: repointed.isPrimary,
+        version: repointed.version,
+      },
+      {
+        repositoryId: primary.repositoryId,
+        path: "/var/lib/steward/repos/primary-new",
+        isPrimary: true,
+        version: primary.version + 1,
+      }
+    );
+
+    const snapshot = (await (
+      await request(address.url, `/v1/projects/${created.projectId}/board`, "GET", HUMAN_TOKEN)
+    ).json()) as {
+      project: { repoPath: string };
+      repositories: readonly { repositoryId: string; name: string; path: string; isPrimary: boolean }[];
+    };
+    assert.equal(snapshot.project.repoPath, "/var/lib/steward/repos/primary-new");
+    assert.deepEqual(
+      snapshot.repositories.map((repository) => ({
+        repositoryId: repository.repositoryId,
+        name: repository.name,
+        path: repository.path,
+        isPrimary: repository.isPrimary,
+      })),
+      [
+        {
+          repositoryId: primary.repositoryId,
+          name: "Repository maintenance",
+          path: "/var/lib/steward/repos/primary-new",
+          isPrimary: true,
+        },
+        {
+          repositoryId: secondary.repositoryId,
+          name: "consumer",
+          path: "/var/lib/steward/repos/consumer",
+          isPrimary: false,
+        },
+      ]
+    );
+
+    const stale = await request(address.url, `/v1/repositories/${secondary.repositoryId}`, "PATCH", HUMAN_TOKEN, {
+      version: secondary.version,
+      name: "stale rename",
+    });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(await stale.json(), {
+      error: { code: "REPOSITORY_VERSION_CONFLICT", message: "Repository version changed" },
+    });
+    const missing = await request(address.url, "/v1/repositories/repository-does-not-exist", "PATCH", HUMAN_TOKEN, {
+      version: 1,
+      name: "missing",
+    });
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), {
+      error: { code: "REPOSITORY_NOT_FOUND", message: "Repository was not found" },
+    });
+  } finally {
+    await service.close();
+  }
+});
+
+test("re-pointing a non-primary repository leaves the project's legacy repo_path alone", async () => {
+  const service = await createTaskBoardService({
+    dbPath: await databasePath(),
+    humanToken: HUMAN_TOKEN,
+    humanPrincipal: "human:alice",
+    port: 0,
+    reconcileIntervalSeconds: 0,
+  });
+  const address = await service.start();
+  try {
+    const project = (
+      (await (
+        await request(address.url, "/v1/projects", "POST", HUMAN_TOKEN, {
+          name: "Mirror guard",
+          description: "The primary mirror must follow only the primary.",
+          repoPath: "/var/lib/steward/repos/primary",
+        })
+      ).json()) as { project: { projectId: string } }
+    ).project;
+    const secondary = (
+      (await (
+        await request(address.url, `/v1/projects/${project.projectId}/repositories`, "POST", HUMAN_TOKEN, {
+          name: "secondary",
+          path: "/var/lib/steward/repos/secondary",
+        })
+      ).json()) as { repository: { repositoryId: string; version: number } }
+    ).repository;
+
+    const repoPath = async (): Promise<string> =>
+      (
+        (
+          (await (await request(address.url, "/v1/projects", "GET", HUMAN_TOKEN)).json()) as {
+            projects: readonly { projectId: string; repoPath: string }[];
+          }
+        ).projects.find((candidate) => candidate.projectId === project.projectId) ?? { repoPath: "" }
+      ).repoPath;
+
+    // `projects.repo_path` is the compatibility mirror a v26-era worker still reads. It tracks the
+    // primary only; a non-primary move must not drag it to another tree.
+    assert.equal(
+      (
+        await request(address.url, `/v1/repositories/${secondary.repositoryId}`, "PATCH", HUMAN_TOKEN, {
+          version: secondary.version,
+          path: "/var/lib/steward/repos/secondary-moved",
+        })
+      ).status,
+      200
+    );
+    assert.equal(await repoPath(), "/var/lib/steward/repos/primary");
+
+    // The primary moving does update it, which is what makes the guard load-bearing rather than
+    // an accident of this test's setup.
+    const primary = (
+      (await (
+        await request(address.url, `/v1/projects/${project.projectId}/repositories`, "GET", HUMAN_TOKEN)
+      ).json()) as { repositories: readonly { repositoryId: string; isPrimary: boolean; version: number }[] }
+    ).repositories.find((candidate) => candidate.isPrimary)!;
+    assert.equal(
+      (
+        await request(address.url, `/v1/repositories/${primary.repositoryId}`, "PATCH", HUMAN_TOKEN, {
+          version: primary.version,
+          path: "/var/lib/steward/repos/primary-moved",
+        })
+      ).status,
+      200
+    );
+    assert.equal(await repoPath(), "/var/lib/steward/repos/primary-moved");
   } finally {
     await service.close();
   }

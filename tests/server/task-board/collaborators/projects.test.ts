@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { TaskBoard } from "#server/task-board";
+import { TaskBoardError } from "#server/task-board/errors";
 import { config, databasePath } from "../helpers.js";
 
 const NOW = "2026-09-06T16:00:00.000Z";
@@ -138,6 +139,61 @@ test("addRepository adds a secondary without changing the primary mirror", async
     assert.equal(
       board.listProjects().find((candidate) => candidate.projectId === project.projectId)?.repoPath,
       project.repoPath
+    );
+  } finally {
+    board.close();
+  }
+});
+
+test("updateRepository renames, re-points the primary mirror, and rejects stale versions", async () => {
+  const path = await databasePath();
+  const board = await TaskBoard.open(config(path, () => new Date(NOW)));
+  try {
+    const project = board.createProject({
+      name: "Catalog",
+      description: "Owns the catalog repositories.",
+      repoPath: "/repos/catalog-api",
+    });
+    const primary = board.listRepositories(project.projectId)[0]!;
+    const secondary = board.addRepository(project.projectId, {
+      name: "Catalog worker old",
+      path: "/repos/catalog-worker",
+    });
+
+    const renamed = board.updateRepository(secondary.repositoryId, {
+      version: secondary.version,
+      name: "Catalog worker",
+    });
+    assert.equal(renamed.name, "Catalog worker");
+    assert.equal(renamed.path, secondary.path);
+    assert.equal(renamed.version, secondary.version + 1);
+
+    const repointed = board.updateRepository(primary.repositoryId, {
+      version: primary.version,
+      path: "/repos/catalog-api-next",
+    });
+    assert.equal(repointed.path, "/repos/catalog-api-next");
+    assert.equal(repointed.isPrimary, true);
+    assert.equal(repointed.version, primary.version + 1);
+    assert.equal(board.snapshot(project.projectId).project.repoPath, repointed.path);
+    assert.deepEqual(
+      board.snapshot(project.projectId).repositories.map((repository) => repository.repositoryId),
+      [primary.repositoryId, secondary.repositoryId]
+    );
+
+    assert.throws(
+      () =>
+        board.updateRepository(secondary.repositoryId, {
+          version: secondary.version,
+          name: "Stale worker name",
+        }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 409 && error.code === "REPOSITORY_VERSION_CONFLICT"
+    );
+    assert.throws(
+      () => board.updateRepository("repository-does-not-exist", { version: 1, name: "Missing" }),
+      (error: unknown) =>
+        error instanceof TaskBoardError && error.status === 404 && error.code === "REPOSITORY_NOT_FOUND"
     );
   } finally {
     board.close();

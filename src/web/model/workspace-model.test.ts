@@ -54,6 +54,7 @@ const agent = (overrides: Partial<BoardAgent>): BoardAgent => {
     role: "engineer",
     area: "Platform",
     mission: "Improve the platform.",
+    repositoryId: null,
     model: null,
     status: "sleeping",
     workerConnection: null,
@@ -324,6 +325,7 @@ describe("workspace view model", () => {
       id: "customer-liaison",
       name: "Customer liaison",
       mission: "Act as the company point of contact.",
+      repositoryId: null,
     });
 
     expect(isExplicitPointOfContact(idSignaledPoc)).toBe(true);
@@ -402,6 +404,7 @@ describe("workspace view model", () => {
         generatedAtMs: Date.parse(laterFraction),
         workItems: [],
         projects: [project],
+        repositories: [],
         agents: [agent({})],
         tasks: [task()],
         messages: [
@@ -471,6 +474,7 @@ describe("workspace view model", () => {
           generatedAtMs: Date.parse(offset),
           workItems: [],
           projects: [project],
+          repositories: [],
           agents: [agent({})],
           tasks: [task()],
           messages: input,
@@ -529,6 +533,7 @@ describe("workspace view model", () => {
       generatedAtMs: Date.parse("2026-07-19T10:15:00.000Z"),
       workItems: [],
       projects: [project],
+      repositories: [],
       agents: [agent({})],
       tasks: [task()],
       messages: [

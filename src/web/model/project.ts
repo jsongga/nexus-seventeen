@@ -16,6 +16,7 @@ import type {
   BoardProject,
   BoardQuestion,
   BoardRun,
+  BoardRepository,
   BoardSnapshot,
   BoardTask,
   BoardTaskPhase,
@@ -127,6 +128,7 @@ export function workItemProjection(raw: RawWorkItem): BoardWorkItem {
     taskType: raw.taskType,
     projectTarget: { ...raw.projectTarget },
     resolvedProjectId: raw.resolvedProjectId,
+    repositoryId: raw.repositoryId,
     parentWorkItemId: raw.parentWorkItemId,
     phase: raw.phase,
     childOrdinal: raw.childOrdinal,
@@ -300,6 +302,23 @@ export function normalize(
     }
   }
 
+  // One project's repositories may arrive on several boards; the first board that names one wins,
+  // and primary-first ordering from the server is preserved.
+  const repositories: BoardRepository[] = [];
+  for (const board of boards) {
+    for (const raw of board.repositories) {
+      if (repositories.some((existing) => existing.id === raw.repositoryId)) continue;
+      repositories.push({
+        id: raw.repositoryId,
+        projectId: raw.projectId,
+        name: raw.name,
+        path: raw.path,
+        isPrimary: raw.isPrimary,
+        version: raw.version,
+      });
+    }
+  }
+
   const agents: BoardAgent[] = boards.flatMap((board) =>
     board.agents.map((raw) => {
       const owned = allRawTasks.filter((task) => task.assignedAgentId === raw.agentId);
@@ -314,6 +333,7 @@ export function normalize(
       return {
         id: raw.agentId,
         projectId: raw.projectId,
+        repositoryId: raw.repositoryId,
         name: raw.agentId,
         role: raw.role,
         area: raw.area,
@@ -370,6 +390,7 @@ export function normalize(
     generatedAtMs: generatedAt.ms,
     workItems,
     projects,
+    repositories,
     agents,
     tasks,
     messages,

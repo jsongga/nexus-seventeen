@@ -133,6 +133,7 @@ export function workItemFromRow(row: Row): WorkItem {
     taskType: stringValue(row, "task_type") as WorkItemTaskType,
     projectTarget,
     resolvedProjectId: nullableString(row, "resolved_project_id"),
+    repositoryId: nullableString(row, "repository_id"),
     parentWorkItemId: nullableString(row, "parent_work_item_id"),
     phase: nullableString(row, "phase") as WorkItemPhase | null,
     childOrdinal: nullableNumberValue(row, "child_ordinal"),

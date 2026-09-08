@@ -9,6 +9,7 @@ const agent: BoardAgent = {
   role: "manager",
   area: "Payment tools",
   mission: "Plan incoming payment-tools work.",
+  repositoryId: null,
   model: "auto",
   status: "sleeping",
   workerConnection: null,

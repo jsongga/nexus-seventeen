@@ -123,6 +123,8 @@ export interface BoardWorkItem {
   taskType: string;
   projectTarget: WorkItemProjectTarget;
   resolvedProjectId: string | null;
+  /** Null inherits the project's primary repository rather than meaning "any". */
+  repositoryId: string | null;
   parentWorkItemId: string | null;
   phase: WorkItemPhase | null;
   childOrdinal: number | null;
@@ -193,6 +195,15 @@ export interface BoardWorkItemDetail extends BoardWorkItem {
   parkCategory: ParkCategory | null;
 }
 
+export interface BoardRepository {
+  id: string;
+  projectId: string;
+  name: string;
+  path: string;
+  isPrimary: boolean;
+  version: number;
+}
+
 export interface BoardProject {
   id: string;
   name: string;
@@ -207,6 +218,8 @@ export interface BoardProject {
 export interface BoardAgent {
   id: string;
   projectId: string;
+  /** The repository this agent's worker holds; null resolves to the project's primary. */
+  repositoryId: string | null;
   name: string;
   role: AgentRole;
   area: string;
@@ -328,6 +341,7 @@ export interface BoardSnapshot {
   generatedAtMs: number;
   workItems: BoardWorkItem[];
   projects: BoardProject[];
+  repositories: BoardRepository[];
   agents: BoardAgent[];
   tasks: BoardTask[];
   messages: BoardMessage[];

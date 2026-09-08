@@ -22,6 +22,7 @@ const snapshot: BoardSnapshot = {
       updatedAtMs: Date.parse(timestamp),
     },
   ],
+  repositories: [],
   agents: [],
   tasks: [],
   messages: [],

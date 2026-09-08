@@ -25,6 +25,7 @@ const parkedWorkItem: BoardWorkItem = {
   taskType: "standard",
   projectTarget: { mode: "auto" },
   resolvedProjectId: "project-one",
+  repositoryId: null,
   parentWorkItemId: null,
   phase: null,
   childOrdinal: null,

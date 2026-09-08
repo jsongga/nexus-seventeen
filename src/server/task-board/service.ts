@@ -48,6 +48,7 @@ import {
   parseUpdateTask,
   parseUpdateTaskPhase,
   parseUpdateProject,
+  parseUpdateRepository,
   parseUpdateWorkItem,
   parseWorkItemAudit,
 } from "./schema.js";
@@ -615,6 +616,18 @@ export class TaskBoardService {
         parseCreateRepository(await readJsonBody(request, this.config.maxBodyBytes))
       );
       sendJson(response, 201, { repository });
+      return;
+    }
+    const repositoryUpdateMatch = /^\/v1\/repositories\/([^/]+)$/u.exec(url.pathname);
+    if (repositoryUpdateMatch && request.method === "PATCH") {
+      noQuery(url);
+      requireHuman(request, this.config);
+      const repositoryId = parseRouteIdentifier(repositoryUpdateMatch[1], "repositoryId");
+      const repository = this.#board.updateRepository(
+        repositoryId,
+        parseUpdateRepository(await readJsonBody(request, this.config.maxBodyBytes))
+      );
+      sendJson(response, 200, { repository });
       return;
     }
     const agentTokenRotateMatch = /^\/v1\/agents\/([^/]+)\/rotate-token$/u.exec(url.pathname);

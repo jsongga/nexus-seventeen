@@ -113,6 +113,7 @@ function reviewingWorkItem(version = 4): BoardWorkItem {
     taskType: "standard",
     projectTarget: { mode: "explicit", projectId: "project-one" },
     resolvedProjectId: "project-one",
+    repositoryId: null,
     parentWorkItemId: null,
     phase: null,
     childOrdinal: null,

@@ -55,6 +55,7 @@ function child(id: string, overrides: Partial<BoardChildWorkItem> = {}): BoardCh
     taskType: "standard",
     projectTarget: { mode: "explicit", projectId: "project-one" },
     resolvedProjectId: "project-one",
+    repositoryId: null,
     parentWorkItemId: "parent-one",
     phase: "migrate",
     childOrdinal: 1,
