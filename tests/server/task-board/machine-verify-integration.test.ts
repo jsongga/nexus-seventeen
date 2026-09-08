@@ -4,7 +4,6 @@ import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import {
   TASK_BOARD_ERROR_CODES,
@@ -20,6 +19,7 @@ import {
   pointProjectAtRepository,
   workItemRequest,
 } from "./helpers.js";
+import { waitForProgress } from "./progress-gate.js";
 
 type Fixture = Awaited<ReturnType<typeof boardFixture>>;
 
@@ -241,16 +241,21 @@ async function driveVerify(
   expectedState: "implementing" | "reviewing" | "dead_letter",
   expectedTerminalAttempts: number
 ): Promise<void> {
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    await fixture.board.sweepVerifyAttempts();
-    if (
-      fixture.board.requireWorkItem(fixture.workItem.workItemId).state === expectedState &&
-      terminalAttemptCount(fixture.path) === expectedTerminalAttempts
-    )
-      return;
-    await delay(25);
-  }
+  await waitForProgress({
+    label: `verify sweep reaching ${expectedState}`,
+    step: () => fixture.board.sweepVerifyAttempts(),
+    observe: () => ({
+      state: fixture.board.requireWorkItem(fixture.workItem.workItemId).state,
+      terminalAttempts: terminalAttemptCount(fixture.path),
+    }),
+    done: (observation) =>
+      observation.state === expectedState && observation.terminalAttempts === expectedTerminalAttempts,
+  });
+  if (
+    fixture.board.requireWorkItem(fixture.workItem.workItemId).state === expectedState &&
+    terminalAttemptCount(fixture.path) === expectedTerminalAttempts
+  )
+    return;
   assert.fail(
     `verify sweep did not reach ${expectedState}; current=${fixture.board.requireWorkItem(fixture.workItem.workItemId).state}`
   );

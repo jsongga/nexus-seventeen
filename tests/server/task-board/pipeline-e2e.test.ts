@@ -4,7 +4,6 @@ import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { codexAdapter } from "../../../src/server/agents/runtime/codex.js";
 import { CODEX_PROFILE } from "../agents/runtime/profile-fixtures.js";
@@ -29,6 +28,7 @@ import { VerifyRunner } from "#server/agents/verify";
 import { createTaskBoardService, normalizeTaskBoardConfig, TaskBoard, type TaskBoardService } from "#server/task-board";
 import { DEFAULT_SUPERVISOR_PATH } from "#server/task-board/collaborators/verify-attempts";
 import { automationConfigurationRequest, automationStages, gateActions } from "./helpers.js";
+import { waitForProgress } from "./progress-gate.js";
 
 const HUMAN_TOKEN = "pipeline-e2e-human-token-0123456789abcdef";
 const MANAGER_TOKEN = "pipeline-e2e-manager-token-0123456789abcdef";
@@ -1292,38 +1292,40 @@ async function proposeAndConfirmItem(
 }
 
 async function driveVerify(fixture: PipelineFixture, expectedState: "implementing" | "reviewing"): Promise<WorkItem> {
-  const startDeadline = Date.now() + 5_000;
-  let launchState = "";
-  while (Date.now() < startDeadline) {
-    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
-    try {
-      launchState = String(
-        db
-          .prepare(
-            `
+  const launchState = await waitForProgress({
+    label: "service-owned machine verify launch",
+    step: () => undefined,
+    observe: () => {
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        return String(
+          db
+            .prepare(
+              `
         SELECT state
         FROM verify_attempts
         ORDER BY created_at DESC, verify_attempt_id DESC
         LIMIT 1
       `
-          )
-          .get()?.state ?? ""
-      );
-    } finally {
-      db.close();
-    }
-    if (launchState !== "" && launchState !== "starting") break;
-    await delay(25);
-  }
+            )
+            .get()?.state ?? ""
+        );
+      } finally {
+        db.close();
+      }
+    },
+    done: (state) => state !== "" && state !== "starting",
+  });
   assert.notEqual(launchState, "", "machine verify did not create an attempt");
   assert.notEqual(launchState, "starting", "machine verify did not finish its service-owned launch");
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    await fixture.sweepBoard.sweepVerifyAttempts();
-    const item = fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId);
-    if (item.state === expectedState) return item;
-    await delay(25);
-  }
+  await waitForProgress({
+    label: `verify sweep reaching ${expectedState}`,
+    step: () => fixture.sweepBoard.sweepVerifyAttempts(),
+    observe: () => fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId).state,
+    done: (state) => state === expectedState,
+  });
+  const item = fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId);
+  if (item.state === expectedState) return item;
   assert.fail(
     `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(fixture.workItem.workItemId).state}`
   );
@@ -1335,9 +1337,38 @@ async function driveVerifyItem(
   expectedState: "implementing" | "reviewing"
 ): Promise<WorkItem> {
   await waitForServiceVerifyLaunches(fixture, [workItemId]);
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    await fixture.sweepBoard.sweepVerifyAttempts();
+  await waitForProgress({
+    label: `verify sweep reaching ${expectedState} for ${workItemId}`,
+    step: () => fixture.sweepBoard.sweepVerifyAttempts(),
+    observe: () => {
+      const state = fixture.sweepBoard.requireWorkItem(workItemId).state;
+      if (state !== "parked" && state !== "dead_letter" && state !== "abandoned") {
+        return { state, park: null };
+      }
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        const reason = db
+          .prepare(
+            `
+          SELECT category,reason
+          FROM park_records
+          WHERE work_item_id=?
+          ORDER BY parked_at DESC,rowid DESC
+          LIMIT 1
+        `
+          )
+          .get(workItemId) as { category?: unknown; reason?: unknown } | undefined;
+        return {
+          state,
+          park: reason === undefined ? null : `${String(reason.category)}: ${String(reason.reason)}`,
+        };
+      } finally {
+        db.close();
+      }
+    },
+    done: (observation) => observation.state === expectedState,
+  });
+  {
     const item = fixture.sweepBoard.requireWorkItem(workItemId);
     if (item.state === expectedState) return item;
     if (item.state === "parked" || item.state === "dead_letter" || item.state === "abandoned") {
@@ -1362,7 +1393,6 @@ async function driveVerifyItem(
         park.close();
       }
     }
-    await delay(25);
   }
   assert.fail(
     `verify sweep did not reach ${expectedState}; current=${fixture.sweepBoard.requireWorkItem(workItemId).state}`
@@ -1370,14 +1400,15 @@ async function driveVerifyItem(
 }
 
 async function waitForServiceVerifyLaunches(fixture: PipelineFixture, workItemIds: readonly string[]): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  let states = new Map<string, string>();
-  while (Date.now() < deadline) {
-    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
-    try {
-      const rows = db
-        .prepare(
-          `
+  const states = await waitForProgress({
+    label: "service-owned verify launches",
+    step: () => undefined,
+    observe: () => {
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        const rows = db
+          .prepare(
+            `
         SELECT plan.work_item_id,verify.state
         FROM verify_attempts verify
         JOIN work_nodes node ON node.node_id=verify.node_id
@@ -1389,21 +1420,26 @@ async function waitForServiceVerifyLaunches(fixture: PipelineFixture, workItemId
             WHERE latest.node_id=verify.node_id AND latest.stage=verify.stage
           )
       `
-        )
-        .all(...workItemIds) as unknown as ReadonlyArray<{ work_item_id: string; state: string }>;
-      states = new Map(rows.map((row) => [row.work_item_id, row.state]));
-    } finally {
-      db.close();
-    }
-    if (
+          )
+          .all(...workItemIds) as unknown as ReadonlyArray<{ work_item_id: string; state: string }>;
+        return new Map(rows.map((row) => [row.work_item_id, row.state]));
+      } finally {
+        db.close();
+      }
+    },
+    done: (observedStates) =>
       workItemIds.every((workItemId) => {
-        const state = states.get(workItemId);
+        const state = observedStates.get(workItemId);
         return state !== undefined && state !== "starting";
-      })
-    )
-      return;
-    await delay(25);
-  }
+      }),
+  });
+  if (
+    workItemIds.every((workItemId) => {
+      const state = states.get(workItemId);
+      return state !== undefined && state !== "starting";
+    })
+  )
+    return;
   assert.fail(
     `service-owned verify launch did not finish: ${workItemIds
       .map((workItemId) => `${workItemId}=${states.get(workItemId) ?? "missing"}`)
@@ -1437,29 +1473,34 @@ async function waitForActiveEngineerRuns(
   fixture: PipelineFixture,
   expectedAgentIds: ReadonlySet<string>
 ): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
-    try {
-      const active = new Set(
-        (
-          db
-            .prepare(
-              `
+  const active = await waitForProgress({
+    label: "both engineer lanes becoming active",
+    step: () => undefined,
+    observe: () => {
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        return new Set(
+          (
+            db
+              .prepare(
+                `
         SELECT DISTINCT agent_id
         FROM runs
         WHERE status='active' AND agent_id IN (${[...expectedAgentIds].map(() => "?").join(",")})
       `
-            )
-            .all(...expectedAgentIds) as unknown as ReadonlyArray<{ agent_id: string }>
-        ).map((row) => row.agent_id)
-      );
-      if (active.size === expectedAgentIds.size && [...expectedAgentIds].every((id) => active.has(id))) return;
-    } finally {
-      db.close();
-    }
-    await delay(10);
-  }
+              )
+              .all(...expectedAgentIds) as unknown as ReadonlyArray<{ agent_id: string }>
+          ).map((row) => row.agent_id)
+        );
+      } finally {
+        db.close();
+      }
+    },
+    done: (observedActive) =>
+      observedActive.size === expectedAgentIds.size && [...expectedAgentIds].every((id) => observedActive.has(id)),
+    pollIntervalMs: 10,
+  });
+  if (active.size === expectedAgentIds.size && [...expectedAgentIds].every((id) => active.has(id))) return;
   assert.fail("both engineer lanes were not active together");
 }
 
@@ -2971,27 +3012,34 @@ test("campaign 10 exit: a child dead-lettering parks the parent (child_failed)",
       1,
       "the durable retired verifier seeded by this arc is replayed once"
     );
-    const cleanupDeadline = Date.now() + 5_000;
-    while (Date.now() < cleanupDeadline) {
-      try {
-        await access(verifyWorkspacePath);
-      } catch {
-        break;
-      }
-      await delay(25);
-    }
+    await waitForProgress({
+      label: "retired verifier workspace cleanup",
+      step: () => undefined,
+      observe: async () => {
+        try {
+          await access(verifyWorkspacePath);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      done: (workspaceExists) => !workspaceExists,
+    });
     await assert.rejects(access(verifyWorkspacePath));
-    const processDeadline = Date.now() + 5_000;
-    let verifyProcessRunning = true;
-    while (Date.now() < processDeadline && verifyProcessRunning) {
-      try {
-        process.kill(verifyPid, 0);
-        await delay(25);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        verifyProcessRunning = false;
-      }
-    }
+    const verifyProcessRunning = await waitForProgress({
+      label: "retired verifier process termination",
+      step: () => undefined,
+      observe: () => {
+        try {
+          process.kill(verifyPid, 0);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          return false;
+        }
+      },
+      done: (running) => !running,
+    });
     assert.equal(verifyProcessRunning, false, "the retired Contract verifier process must terminate");
     const cancellationDb = new DatabaseSync(fixture.dbPath, { readOnly: true });
     try {
