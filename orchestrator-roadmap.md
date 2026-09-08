@@ -233,7 +233,8 @@ conflict stays worth showing — a product question, which is why 9.8 did not
 absorb it.
 
 **9.11. Move the agent credential boundary from rejection to redaction**
-_(proposed 2026-09-02)_ — 9.10 is the third attempt to make a fail-closed filter
+_(shipped 2026-09-08; spec
+`docs/superpowers/specs/2026-09-07-credential-redaction.md`)_ — 9.10 is the third attempt to make a fail-closed filter
 precise enough for prose, and each attempt has had a false-positive class found
 by review rather than by testing: a length floor rejected "Bearer
 authentication", a non-letter rule rejected it with a full stop, a length net
