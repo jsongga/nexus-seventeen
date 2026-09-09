@@ -25,9 +25,9 @@ import type {
   BoardTask,
   BoardWorkItem,
   BoardWorkItemDependency,
-  ProjectWorkflow,
 } from "../types";
 import { FinalApprovalActions, FinalRejectionForm, WorkItemFooterActions } from "./work-item/approval";
+import { useProposedWorkflow } from "./work-item/use-proposed-workflow";
 import { AttestDeploymentForm, ContractAttestationGate } from "./work-item/deployment";
 import { GapReportSection, PipelineSummaryDetails } from "./work-item/evidence";
 import {
@@ -114,14 +114,11 @@ export function WorkItemDetail({
     "cancel" | "reject" | "merge" | "requestChanges" | "archive" | "attest" | "resume" | null
   >(null);
   const actionErrors = useActionErrors();
-  const [workflow, setWorkflow] = useState<ProjectWorkflow | null>(null);
-  const [workflowState, setWorkflowState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [workflowError, setWorkflowError] = useState<string | null>(null);
-  const [workflowAttempt, setWorkflowAttempt] = useState(0);
   const [pipelineSummary, setPipelineSummary] = useState<PipelineSummary | null>(null);
   const [pipelineSummaryState, setPipelineSummaryState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [pipelineSummaryError, setPipelineSummaryError] = useState<string | null>(null);
   const [pipelineSummaryAttempt, setPipelineSummaryAttempt] = useState(0);
+  const { workflow, workflowState, workflowError, retryWorkflow } = useProposedWorkflow(client, workItem);
   const [audit, setAudit] = useState<RawWorkItemAudit | null>(null);
   const [auditState, setAuditState] = useState<"loading" | "ready" | "error">("loading");
   const [gapReportContent, setGapReportContent] = useState<string | null>(null);
@@ -358,32 +355,6 @@ export function WorkItemDetail({
       });
     return () => controller.abort();
   }, [client, snapshotRevision, workItem.id, workItem.version]);
-
-  useEffect(() => {
-    if (workItem.state !== "plan_approval" || workItem.resolvedProjectId === null) {
-      setWorkflow(null);
-      setWorkflowError(null);
-      setWorkflowState("idle");
-      return;
-    }
-    const controller = new AbortController();
-    setWorkflow(null);
-    setWorkflowError(null);
-    setWorkflowState("loading");
-    void client
-      .getProjectWorkflow(workItem.resolvedProjectId, controller.signal)
-      .then((next) => {
-        if (controller.signal.aborted) return;
-        setWorkflow(next);
-        setWorkflowState("ready");
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted) return;
-        setWorkflowError(caught instanceof Error ? caught.message : "The proposed plan could not be loaded");
-        setWorkflowState("error");
-      });
-    return () => controller.abort();
-  }, [client, workItem.id, workItem.resolvedProjectId, workItem.state, workflowAttempt]);
 
   useEffect(() => {
     if (!pipelineSummaryVisible) {
@@ -852,11 +823,7 @@ export function WorkItemDetail({
                   </p>
                 </div>
                 {workflowState === "error" ? (
-                  <Button
-                    size="sm"
-                    icon={<RefreshCw size={14} />}
-                    onClick={() => setWorkflowAttempt((value) => value + 1)}
-                  >
+                  <Button size="sm" icon={<RefreshCw size={14} />} onClick={retryWorkflow}>
                     Retry
                   </Button>
                 ) : null}
