@@ -100,3 +100,30 @@ a limit breached within two days by ordinary work, with no gate to notice. Rejec
 
 **Do nothing.** Defensible — both files are navigable and every test passes. But 9.12 was a defect
 caused directly by state sitting at the wrong level, so this is not purely cosmetic.
+
+## Outcome (2026-09-09): two clusters were seams, three were navigation
+
+`useBoardNotifications` and `useBoardPause` shipped. `BoardApp.tsx` went **1,402 → 1,256** and the
+ratchet baseline fell with each.
+
+The other three did not, and the spec's premise above is why. It claimed every group was coherent —
+_"no member is read by a function that touches another group's members"_. Measured against the
+file, that holds for the two extracted and fails for the rest:
+
+| Cluster                 | What crosses it                                                                                                                                                                                                                                                        |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useBoardDialogs`       | `showDialog` / `closeDialog` reach into `dismissActionError` and `actionErrorContexts`, both form-dirty refs, `taskDialogAnchorRef`, `pendingDialogActionRef` and `navigateRoute`; and a routing effect writes `setWorkItemDetailLoadingId` — another cluster's setter |
+| `useWorkItemDetailLoad` | written from three directions: a routing effect keyed on `page`, `refreshManually` in the snapshot cluster, and its own loaders                                                                                                                                        |
+| `useBoardSnapshot`      | `refreshManually` writes `familyRefreshRevision`, which belongs to the detail cluster                                                                                                                                                                                  |
+
+Extracting them as proposed would produce hooks that **share mutable state across their seam** —
+the exact failure this plan names as how a refactor becomes a behaviour change. Passing eight
+dependencies into a hook that still calls another cluster's setter is filing, not extraction.
+
+**What actually binds them is navigation.** A page change decides what detail to load, which dialog
+to close, and what to refresh. So the seam here is not `dialogs | detail | snapshot`; it is
+navigation and everything it drives — a larger design question than this campaign scoped, and one
+that should not be answered mid-extraction against a 1,256-line file.
+
+The durable half of the campaign shipped regardless: the ratchet keeps the 146 removed lines from
+coming back.
