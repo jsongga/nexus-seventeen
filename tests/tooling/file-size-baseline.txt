@@ -104,12 +104,13 @@ src/shared/task-board-contract/validate/plans.ts	611
 src/shared/task-board-contract/validate/requests.ts	780
 src/shared/task-board-contract/validate/scalars.ts	224
 src/shared/task-board-contract/validate/worker.ts	1052
-src/web/BoardApp.tsx	1345
+src/web/BoardApp.tsx	1256
 src/web/board/dialog-triggers.ts	41
 src/web/board/notifications.tsx	100
 src/web/board/pause.tsx	31
 src/web/board/selection.ts	43
 src/web/board/use-board-notifications.ts	107
+src/web/board/use-board-pause.ts	156
 src/web/components/dialog-stack.ts	271
 src/web/components/popover.tsx	146
 src/web/components/ui.tsx	504

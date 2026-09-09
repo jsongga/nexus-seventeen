@@ -59,8 +59,9 @@ import type {
 } from "./types";
 import { type DialogOpenOptions, type PendingDialogAction, resolveDialogTriggerAction } from "./board/dialog-triggers";
 import { NotificationsBlock } from "./board/notifications";
+import { useBoardPause } from "./board/use-board-pause";
 import { useBoardNotifications } from "./board/use-board-notifications";
-import { BoardPauseBanner, pausePopoverShouldClose } from "./board/pause";
+import { BoardPauseBanner } from "./board/pause";
 import {
   type WorkItemDetailLoadResult,
   routedWorkItemSelection,
@@ -108,31 +109,7 @@ export async function runWorkItemDetailMutation(
   }
 }
 
-export async function changeBoardPause(
-  client: TaskBoardClient,
-  boardPause: RawBoardPause,
-  reason: string | null
-): Promise<RawBoardPause | null> {
-  if (boardPause.paused) return client.resumeBoard({ version: boardPause.version });
-  if (reason === null) return null;
-  const trimmedReason = reason.slice(0, 500).trim();
-  return client.setBoardPause({
-    reason: trimmedReason.length === 0 ? null : trimmedReason,
-    version: boardPause.version,
-  });
-}
-
 /** Keeps delayed reads from replacing a newer pause mutation response. */
-export class BoardPauseVersionGuard {
-  #latestVersion: number | null = null;
-
-  accept(next: RawBoardPause): boolean {
-    if (this.#latestVersion !== null && next.version < this.#latestVersion) return false;
-    this.#latestVersion = next.version;
-    return true;
-  }
-}
-
 /** Aborts superseded detail reads and rejects responses from older navigation intents. */
 export class WorkItemDetailLoadCoordinator {
   #generation = 0;
@@ -218,15 +195,9 @@ export function BoardApp() {
   const [familyRefreshRevision, setFamilyRefreshRevision] = useState(0);
   const [loadedWorkItemDetail, setLoadedWorkItemDetail] = useState<BoardWorkItemDetail | null>(null);
   const [workItemDetailLoadingId, setWorkItemDetailLoadingId] = useState<string | null>(null);
-  const [boardPause, setBoardPause] = useState<RawBoardPause | null>(null);
-  const [pausePopoverOpen, setPausePopoverOpen] = useState(false);
-  const [pauseBusy, setPauseBusy] = useState(false);
-  const [pauseControlError, setPauseControlError] = useState<string | null>(null);
   // The draft lives here, not in the sidebar: crossing the rail breakpoint swaps which sidebar is
   // mounted, and an operator must not lose what they typed to a layout change.
-  const [pauseReason, setPauseReason] = useState("");
   const snapshotCommits = useMemo(() => new SnapshotCommitCoordinator<BoardSnapshot>(), []);
-  const pauseVersions = useMemo(() => new BoardPauseVersionGuard(), []);
   const workItemDetailLoads = useMemo(() => new WorkItemDetailLoadCoordinator(), []);
   const observedTaskIds = useRef(new Set<string>());
   const previousSnapshotWorkItems = useRef<readonly BoardWorkItem[]>([]);
@@ -250,6 +221,20 @@ export function BoardApp() {
   const [taskDialogAnchorRef, setTaskDialogAnchorRef] =
     useState<RefObject<HTMLElement | null>>(fallbackTaskDialogAnchorRef);
   const connected = snapshot !== null && !errorPipeline.connectivityDown;
+  const {
+    boardPause,
+    updateBoardPause,
+    pausePopoverOpen,
+    pauseBusy,
+    pauseControlError,
+    pauseReason,
+    setPauseReason,
+    openPausePopover,
+    closePausePopover,
+    hidePausePopover,
+    confirmPause,
+    resumeBoard,
+  } = useBoardPause(client, connected);
   currentPageRef.current = page;
   currentSnapshotRef.current = snapshot;
 
@@ -258,17 +243,6 @@ export function BoardApp() {
       return snapshotCommits.commit(next, signal, setSnapshot);
     },
     [snapshotCommits]
-  );
-
-  const updateBoardPause = useCallback(
-    (next: RawBoardPause | null) => {
-      if (next === null) {
-        setBoardPause(null);
-        return;
-      }
-      if (pauseVersions.accept(next)) setBoardPause(next);
-    },
-    [pauseVersions]
   );
 
   useLayoutEffect(() => {
@@ -301,10 +275,6 @@ export function BoardApp() {
     retryNotifications,
     markNotificationRead,
   } = useBoardNotifications(client, snapshot);
-
-  useEffect(() => {
-    if (pausePopoverShouldClose(boardPause)) setPausePopoverOpen(false);
-  }, [boardPause]);
 
   const performRefresh = useCallback(
     async (kind: BoardRefreshKind, signal: AbortSignal): Promise<boolean> => {
@@ -727,65 +697,6 @@ export function BoardApp() {
       closeDialog({ continuePendingAction: false });
     }
     return result;
-  }
-
-  function openPausePopover() {
-    if (boardPause === null || boardPause.paused || pauseBusy) return;
-    // Reopening after a conflict shows what happened; a blank form hides it.
-    setPausePopoverOpen(true);
-  }
-
-  /** Closes the popover and discards the draft — the operator abandoned the attempt. */
-  function closePausePopover() {
-    setPausePopoverOpen(false);
-    setPauseControlError(null);
-    setPauseReason("");
-  }
-
-  /**
-   * A layout change closes an idle popover, but never one holding an attempt: in flight, failed,
-   * or carrying a typed reason. Losing a draft to a resize is not something the operator asked for.
-   */
-  function hidePausePopover() {
-    if (pauseBusy || pauseControlError !== null || pauseReason.trim() !== "") return;
-    setPausePopoverOpen(false);
-  }
-
-  async function confirmPause(reason: string | null) {
-    if (!connected || boardPause === null || boardPause.paused || pauseBusy) return;
-    setPauseBusy(true);
-    setPauseControlError(null);
-    try {
-      const next = await changeBoardPause(client, boardPause, reason);
-      if (next !== null) {
-        updateBoardPause(next);
-        setPausePopoverOpen(false);
-        setPauseReason("");
-      }
-    } catch (caught) {
-      setPauseControlError(caught instanceof Error ? caught.message : "The board pause state could not be changed.");
-    } finally {
-      setPauseBusy(false);
-    }
-  }
-
-  async function resumeBoard() {
-    if (boardPause === null || !boardPause.paused || pauseBusy) return;
-    setPauseBusy(true);
-    setPauseControlError(null);
-    try {
-      const next = await changeBoardPause(client, boardPause, null);
-      if (next !== null) updateBoardPause(next);
-    } catch (caught) {
-      setPauseControlError(caught instanceof Error ? caught.message : "The board pause state could not be changed.");
-      try {
-        updateBoardPause(await client.getBoardPause());
-      } catch {
-        // Keep the last authoritative state visible with the mutation error.
-      }
-    } finally {
-      setPauseBusy(false);
-    }
   }
 
   let content: ReactNode;

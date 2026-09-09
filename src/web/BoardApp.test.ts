@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  BoardPauseVersionGuard,
-  WorkItemDetailLoadCoordinator,
-  changeBoardPause,
-  refreshBoardSnapshot,
-} from "./BoardApp";
+import { WorkItemDetailLoadCoordinator, refreshBoardSnapshot } from "./BoardApp";
+import { BoardPauseVersionGuard, changeBoardPause } from "./board/use-board-pause";
 import { resolveDialogTriggerAction } from "./board/dialog-triggers";
 import { pausePopoverShouldClose } from "./board/pause";
 import { routedWorkItemSelection, snapshotLostSelectedWorkItem, workItemDetailReloadPending } from "./board/selection";
