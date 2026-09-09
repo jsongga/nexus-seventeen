@@ -2,7 +2,6 @@
 
 import { Archive, Check, CirclePause, HelpCircle, RefreshCw, Send, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PipelineSummary } from "@shared/task-board-contract";
 import { fieldsAreDirty } from "../components/dialog-stack";
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from "../components/ui";
 import { BoardApiError, type TaskBoardClient } from "../data/client";
@@ -28,6 +27,7 @@ import type {
 import { FinalApprovalActions, FinalRejectionForm, WorkItemFooterActions } from "./work-item/approval";
 import { useProposedWorkflow } from "./work-item/use-proposed-workflow";
 import { useWorkItemAudit } from "./work-item/use-work-item-audit";
+import { usePipelineSummary } from "./work-item/use-pipeline-summary";
 import { AttestDeploymentForm, ContractAttestationGate } from "./work-item/deployment";
 import { GapReportSection, PipelineSummaryDetails } from "./work-item/evidence";
 import {
@@ -114,10 +114,6 @@ export function WorkItemDetail({
     "cancel" | "reject" | "merge" | "requestChanges" | "archive" | "attest" | "resume" | null
   >(null);
   const actionErrors = useActionErrors();
-  const [pipelineSummary, setPipelineSummary] = useState<PipelineSummary | null>(null);
-  const [pipelineSummaryState, setPipelineSummaryState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [pipelineSummaryError, setPipelineSummaryError] = useState<string | null>(null);
-  const [pipelineSummaryAttempt, setPipelineSummaryAttempt] = useState(0);
   const { workflow, workflowState, workflowError, retryWorkflow } = useProposedWorkflow(client, workItem);
   const { audit: renderedAudit, auditState: renderedAuditState } = useWorkItemAudit(
     client,
@@ -138,7 +134,6 @@ export function WorkItemDetail({
   const [familyAttempt, setFamilyAttempt] = useState(0);
   const familyHasLastGoodRef = useRef(seededFamily.children.length > 0);
   const familyNotParentRef = useRef(seededFamily.parentAbsent);
-  const pipelineSummaryWorkItemIdRef = useRef(workItem.id);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const mergeConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
   const archiveConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
@@ -194,10 +189,12 @@ export function WorkItemDetail({
   const archiveHintId = `work-item-archive-hint-${workItem.id}`;
   const pipelineSummaryVisible =
     ["reviewing", "fixing", "final_approval"].includes(workItem.state) && !isDecomposedParent;
-  const pipelineSummaryBelongsToWorkItem = pipelineSummaryWorkItemIdRef.current === workItem.id;
-  const renderedPipelineSummary = pipelineSummaryBelongsToWorkItem ? pipelineSummary : null;
-  const renderedPipelineSummaryState = pipelineSummaryBelongsToWorkItem ? pipelineSummaryState : "loading";
-  const renderedPipelineSummaryError = pipelineSummaryBelongsToWorkItem ? pipelineSummaryError : null;
+  const {
+    pipelineSummary: renderedPipelineSummary,
+    pipelineSummaryState: renderedPipelineSummaryState,
+    pipelineSummaryError: renderedPipelineSummaryError,
+    retryPipelineSummary,
+  } = usePipelineSummary(client, workItem, pipelineSummaryVisible);
 
   useEffect(() => {
     setAnswer("");
@@ -289,13 +286,6 @@ export function WorkItemDetail({
   ]);
 
   useEffect(() => {
-    pipelineSummaryWorkItemIdRef.current = workItem.id;
-    setPipelineSummary(null);
-    setPipelineSummaryError(null);
-    setPipelineSummaryState("idle");
-  }, [workItem.id]);
-
-  useEffect(() => {
     if (workItem.taskType !== "onboarding") {
       setGapReportContent(null);
       setGapReportError(null);
@@ -332,28 +322,6 @@ export function WorkItemDetail({
     if (typeof window.matchMedia !== "function") return;
     if (window.matchMedia("(max-width: 1279px)").matches) detailHeadingRef.current?.focus();
   }, [workItem.id]);
-
-  useEffect(() => {
-    if (!pipelineSummaryVisible) {
-      return;
-    }
-    const controller = new AbortController();
-    setPipelineSummaryError(null);
-    setPipelineSummaryState(renderedPipelineSummary === null ? "loading" : "ready");
-    void client
-      .getPipelineSummary(workItem.id, controller.signal)
-      .then((next) => {
-        if (controller.signal.aborted) return;
-        setPipelineSummary(next);
-        setPipelineSummaryState("ready");
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted) return;
-        setPipelineSummaryError(caught instanceof Error ? caught.message : "The pipeline summary could not be loaded");
-        setPipelineSummaryState("error");
-      });
-    return () => controller.abort();
-  }, [client, pipelineSummaryAttempt, pipelineSummaryVisible, workItem.id, workItem.state, workItem.version]);
 
   const proposedPlan = useMemo(
     () => (workflow === null ? null : proposedPlanForWorkItem(workflow, workItem.id)),
@@ -876,11 +844,7 @@ export function WorkItemDetail({
                   </p>
                 </div>
                 {renderedPipelineSummaryState === "error" ? (
-                  <Button
-                    size="sm"
-                    icon={<RefreshCw size={14} />}
-                    onClick={() => setPipelineSummaryAttempt((value) => value + 1)}
-                  >
+                  <Button size="sm" icon={<RefreshCw size={14} />} onClick={retryPipelineSummary}>
                     Retry
                   </Button>
                 ) : null}

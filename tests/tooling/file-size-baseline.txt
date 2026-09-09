@@ -156,7 +156,7 @@ src/web/views/LedgersPage.tsx	409
 src/web/views/TaskDetail.tsx	468
 src/web/views/TaskList.tsx	395
 src/web/views/ThreadPipelineTable.tsx	111
-src/web/views/WorkItemDetail.tsx	1198
+src/web/views/WorkItemDetail.tsx	1162
 src/web/views/WorkspaceHeader.tsx	15
 src/web/views/WorkspaceSidebar.tsx	235
 src/web/views/automation/AgentTypeForm.tsx	292
@@ -172,6 +172,7 @@ src/web/views/work-item/evidence.tsx	394
 src/web/views/work-item/family.tsx	229
 src/web/views/work-item/observability.tsx	160
 src/web/views/work-item/plan.tsx	283
+src/web/views/work-item/use-pipeline-summary.ts	74
 src/web/views/work-item/use-proposed-workflow.ts	63
 src/web/views/work-item/use-work-item-audit.ts	61
 src/web/views/workspace/AgentPage.tsx	406
