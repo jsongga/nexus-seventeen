@@ -60,3 +60,19 @@ rounds cap 5.
 tolerance, or rounds up, or excludes the two shells, it will pass forever and protect nothing — the
 same way campaign 13's banner pass silently did not happen because it sat outside the exit
 criteria. Task 1's own exit therefore includes a falsification: adding a line must fail.
+
+## Outcome (2026-09-09)
+
+**Task 1** shipped: 176 files ratcheted, falsified three ways.
+
+**Task 2** shipped two of five clusters — `useBoardNotifications` and `useBoardPause`.
+`BoardApp.tsx` 1,402 → 1,256. The other three are not seams; the spec records why.
+
+**Task 3** shipped all three of `WorkItemDetail`'s loads — `useProposedWorkflow`,
+`useWorkItemAudit`, `usePipelineSummary`. 1,254 → 1,162. These were genuine seams: each resets on
+`workItem.id` independently and none writes another's state.
+
+Deliberately not built: a generic `useAsyncResource` over the three. They share a shape but differ
+in gating, dependencies, and whether a stale value stays rendered during reload — an abstraction
+taking a predicate, a dependency list, an abort signal, a retry counter and a reset key is as
+complex as the duplication it replaces.
