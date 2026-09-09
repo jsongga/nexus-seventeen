@@ -227,6 +227,9 @@ export function BoardApp() {
   const [pausePopoverOpen, setPausePopoverOpen] = useState(false);
   const [pauseBusy, setPauseBusy] = useState(false);
   const [pauseControlError, setPauseControlError] = useState<string | null>(null);
+  // The draft lives here, not in the sidebar: crossing the rail breakpoint swaps which sidebar is
+  // mounted, and an operator must not lose what they typed to a layout change.
+  const [pauseReason, setPauseReason] = useState("");
   const notificationLoads = useMemo(() => new NotificationLoadCoordinator(), []);
   const snapshotCommits = useMemo(() => new SnapshotCommitCoordinator<BoardSnapshot>(), []);
   const pauseVersions = useMemo(() => new BoardPauseVersionGuard(), []);
@@ -785,13 +788,24 @@ export function BoardApp() {
 
   function openPausePopover() {
     if (boardPause === null || boardPause.paused || pauseBusy) return;
-    setPauseControlError(null);
+    // Reopening after a conflict shows what happened; a blank form hides it.
     setPausePopoverOpen(true);
   }
 
+  /** Closes the popover and discards the draft — the operator abandoned the attempt. */
   function closePausePopover() {
     setPausePopoverOpen(false);
     setPauseControlError(null);
+    setPauseReason("");
+  }
+
+  /**
+   * A layout change closes an idle popover, but never one holding an attempt: in flight, failed,
+   * or carrying a typed reason. Losing a draft to a resize is not something the operator asked for.
+   */
+  function hidePausePopover() {
+    if (pauseBusy || pauseControlError !== null || pauseReason.trim() !== "") return;
+    setPausePopoverOpen(false);
   }
 
   async function confirmPause(reason: string | null) {
@@ -803,6 +817,7 @@ export function BoardApp() {
       if (next !== null) {
         updateBoardPause(next);
         setPausePopoverOpen(false);
+        setPauseReason("");
       }
     } catch (caught) {
       setPauseControlError(caught instanceof Error ? caught.message : "The board pause state could not be changed.");
@@ -1317,6 +1332,9 @@ export function BoardApp() {
         void confirmPause(reason);
       }}
       onCancelPause={closePausePopover}
+      pauseReason={pauseReason}
+      onPauseReasonChange={setPauseReason}
+      onHidePausePopover={hidePausePopover}
       onResumeBoard={() => {
         void resumeBoard();
       }}

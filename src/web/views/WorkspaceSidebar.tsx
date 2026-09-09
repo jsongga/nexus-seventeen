@@ -1,7 +1,7 @@
 /** Frames the workspace: the navigation rail beside the routed page. */
 
 import { Menu, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { BoardAgent, BoardSnapshot } from "../types";
 import type { RawBoardPause } from "../data/parse";
 import type { BoardPage } from "../routing/routing";
@@ -25,6 +25,9 @@ export function WorkspaceFrame({
   onPauseBoard = () => undefined,
   onConfirmPause = () => undefined,
   onCancelPause = () => undefined,
+  pauseReason = "",
+  onPauseReasonChange = () => undefined,
+  onHidePausePopover = () => undefined,
   onResumeBoard = () => undefined,
   children,
 }: {
@@ -45,27 +48,28 @@ export function WorkspaceFrame({
   onPauseBoard?: () => void;
   onConfirmPause?: (reason: string) => void;
   onCancelPause?: () => void;
+  pauseReason?: string;
+  onPauseReasonChange?: (reason: string) => void;
+  /** Closes the popover without discarding the draft — a layout change is not a cancellation. */
+  onHidePausePopover?: () => void;
   onResumeBoard?: () => void;
   children: ReactNode;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
-  const [pauseReason, setPauseReason] = useState("");
   const pausePopoverOpenRef = useRef(pausePopoverOpen);
   const pauseBusyRef = useRef(pauseBusy);
-  const onCancelPauseRef = useRef(onCancelPause);
+  const onHidePausePopoverRef = useRef(onHidePausePopover);
   pausePopoverOpenRef.current = pausePopoverOpen;
   pauseBusyRef.current = pauseBusy;
-  onCancelPauseRef.current = onCancelPause;
-
-  useEffect(() => {
-    if (!pausePopoverOpen) setPauseReason("");
-  }, [pausePopoverOpen]);
+  onHidePausePopoverRef.current = onHidePausePopover;
 
   useEffect(() => {
     const desktop = window.matchMedia("(min-width: 1024px)");
     const onBreakpointChange = () => {
-      if (pausePopoverOpenRef.current && !pauseBusyRef.current) onCancelPauseRef.current();
+      // Crossing the breakpoint swaps the rail for the drawer, so the popover must close —
+      // but the operator did not abandon it, so the draft and any error survive.
+      if (pausePopoverOpenRef.current) onHidePausePopoverRef.current();
     };
     desktop.addEventListener("change", onBreakpointChange);
     return () => desktop.removeEventListener("change", onBreakpointChange);
@@ -123,7 +127,7 @@ export function WorkspaceFrame({
   }, [drawerOpen, onDrawerChange]);
 
   const closeDrawer = (restoreFocus = true) => {
-    if (pausePopoverOpen) onCancelPause();
+    if (pausePopoverOpen) onHidePausePopover();
     onDrawerChange(false);
     if (restoreFocus) window.setTimeout(() => openerRef.current?.focus(), 0);
   };
@@ -170,7 +174,7 @@ export function WorkspaceFrame({
           pauseControlDisabled={pauseControlDisabled}
           pauseControlError={pauseControlError}
           onPauseBoard={onPauseBoard}
-          onPauseReasonChange={setPauseReason}
+          onPauseReasonChange={onPauseReasonChange}
           onConfirmPause={onConfirmPause}
           onCancelPause={onCancelPause}
           onResumeBoard={onResumeBoard}
@@ -216,7 +220,7 @@ export function WorkspaceFrame({
               pauseControlDisabled={pauseControlDisabled}
               pauseControlError={pauseControlError}
               onPauseBoard={onPauseBoard}
-              onPauseReasonChange={setPauseReason}
+              onPauseReasonChange={onPauseReasonChange}
               onConfirmPause={onConfirmPause}
               onCancelPause={onCancelPause}
               onResumeBoard={onResumeBoard}
