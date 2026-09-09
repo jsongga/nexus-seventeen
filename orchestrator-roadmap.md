@@ -167,7 +167,10 @@ misleading names; produce a renaming plan with ripple costs and the
 migration-sensitive exceptions (Dokploy volume names, pinned identifiers,
 external env vars) called out.
 
-**9.8. Load-tolerant pipeline e2e timing** _(queued 2026-08-29)_ — the
+**9.8. Load-tolerant pipeline e2e timing** _(shipped 2026-09-08; spec
+`docs/superpowers/specs/2026-09-08-load-tolerant-timing.md`. The Playwright arc it
+named turned out to be a symptom of 9.12 rather than a timing window, and was
+fixed there.)_ — the
 `machine-verify-integration` and `pipeline-e2e` arcs pin fixed windows
 ("verify sweep did not reach reviewing"; a 122 s kill-switch run gets
 wall-clock-parked) and fail whenever a reviewer runs tests concurrently;
@@ -218,8 +221,8 @@ where tokens are uncommon anyway), and an identifier carrying a digit
 ("OAuth2Middleware") is still rejected. Persistence redacts in every one of these
 cases; only the send path is affected.
 
-**9.12. A pause conflict is lost when its popover closes first** _(found
-2026-09-08 by roadmap 9.8; `.superpowers/sdd/2026-09-08-load-tolerant-timing/task-2-finding.md`)_
+**9.12. A pause conflict is lost when its popover closes first** _(shipped
+2026-09-08; found by roadmap 9.8; `.superpowers/sdd/2026-09-08-load-tolerant-timing/task-2-finding.md`)_
 — `confirmPause` reports a version conflict by setting `pauseControlError`, but
 `openPausePopover` and `closePausePopover` both clear it and an effect closes the
 popover on any `boardPause` change (`BoardApp.tsx:329,786,792`). So the error is
