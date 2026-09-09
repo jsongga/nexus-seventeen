@@ -158,8 +158,8 @@ pause hides a later 409/network error and the typed reason; no Playwright flow
 opens `Approve and merge pipeline`; the scrimless anchored panel's edge relies on
 the elevation shadow alone. None destroys data; a second click or retry recovers.
 
-**9.7. Naming audit** _(queued 2026-08-28; analysis first, renames as reviewed
-mechanical tasks)_ — sweep code, config, docs, and UI copy for inconsistent
+**9.7. Naming audit** _(shipped 2026-09-08; analysis
+`docs/superpowers/specs/2026-09-08-naming-audit.md`, glossary `docs/GLOSSARY.md`)_ — sweep code, config, docs, and UI copy for inconsistent
 vocabulary (`steward` vs `nexus-seventeen`, `provider` vs `runtime`, `intake` /
 `onboarding` / `work item` / `task`, `lane` vs `worker`), file names vs their
 primary export, folder names vs the seam they hold, abbreviations and
