@@ -48,7 +48,6 @@ import {
 } from "./model/refresh-coordinator";
 import { createTaskDetailDraftState, taskDetailDraftReducer } from "./model/task-detail-drafts";
 import { signInFailure } from "./model/sign-in-failure";
-import { NotificationLoadCoordinator } from "./model/notification-load";
 import { groupWorkItems } from "./model/work-item-tree";
 import { decompositionFamilyVersionKey } from "./model/work-item-detail";
 import type {
@@ -60,6 +59,7 @@ import type {
 } from "./types";
 import { type DialogOpenOptions, type PendingDialogAction, resolveDialogTriggerAction } from "./board/dialog-triggers";
 import { NotificationsBlock } from "./board/notifications";
+import { useBoardNotifications } from "./board/use-board-notifications";
 import { BoardPauseBanner, pausePopoverShouldClose } from "./board/pause";
 import {
   type WorkItemDetailLoadResult,
@@ -215,11 +215,6 @@ export function BoardApp() {
   const [connectivityError, setConnectivityError] = useState<string | null>(null);
   const [signInExpired, setSignInExpired] = useState(false);
   const [automationEditorState, setAutomationEditorState] = useState(emptyAutomationEditorState);
-  const [notifications, setNotifications] = useState<BoardNotifications | null>(null);
-  const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const [notificationsError, setNotificationsError] = useState<string | null>(null);
-  const [markingNotificationId, setMarkingNotificationId] = useState<string | null>(null);
-  const [notificationsAttempt, setNotificationsAttempt] = useState(0);
   const [familyRefreshRevision, setFamilyRefreshRevision] = useState(0);
   const [loadedWorkItemDetail, setLoadedWorkItemDetail] = useState<BoardWorkItemDetail | null>(null);
   const [workItemDetailLoadingId, setWorkItemDetailLoadingId] = useState<string | null>(null);
@@ -230,7 +225,6 @@ export function BoardApp() {
   // The draft lives here, not in the sidebar: crossing the rail breakpoint swaps which sidebar is
   // mounted, and an operator must not lose what they typed to a layout change.
   const [pauseReason, setPauseReason] = useState("");
-  const notificationLoads = useMemo(() => new NotificationLoadCoordinator(), []);
   const snapshotCommits = useMemo(() => new SnapshotCommitCoordinator<BoardSnapshot>(), []);
   const pauseVersions = useMemo(() => new BoardPauseVersionGuard(), []);
   const workItemDetailLoads = useMemo(() => new WorkItemDetailLoadCoordinator(), []);
@@ -258,32 +252,6 @@ export function BoardApp() {
   const connected = snapshot !== null && !errorPipeline.connectivityDown;
   currentPageRef.current = page;
   currentSnapshotRef.current = snapshot;
-
-  const loadNotifications = useCallback(
-    async (token: number, afterMarkRead = false) => {
-      setNotificationsLoading(true);
-      try {
-        const next = await client.getNotifications();
-        if (!notificationLoads.isLatest(token)) return;
-        setNotifications(next);
-        setNotificationsError(null);
-      } catch (caught) {
-        if (!notificationLoads.isLatest(token)) return;
-        setNotificationsError(
-          afterMarkRead
-            ? caught instanceof Error
-              ? `Marked read, but notifications could not refresh. ${caught.message}`
-              : "Marked read, but notifications could not refresh."
-            : caught instanceof Error
-              ? caught.message
-              : "Notifications could not be loaded."
-        );
-      } finally {
-        if (notificationLoads.isLatest(token)) setNotificationsLoading(false);
-      }
-    },
-    [client, notificationLoads]
-  );
 
   const commitSnapshot = useCallback(
     (next: BoardSnapshot, signal: AbortSignal): Promise<boolean> => {
@@ -323,10 +291,16 @@ export function BoardApp() {
     setWorkItemDetailLoadingId(null);
   }, [page, workItemDetailLoadingId, workItemDetailLoads]);
 
-  useEffect(() => {
-    notificationLoads.activate();
-    return () => notificationLoads.deactivate();
-  }, [notificationLoads]);
+  // Called here so the coordinator's activate effect keeps the position it had before the
+  // extraction; React fires effects in call order and this one must run before the board loads.
+  const {
+    notifications,
+    notificationsLoading,
+    notificationsError,
+    markingNotificationId,
+    retryNotifications,
+    markNotificationRead,
+  } = useBoardNotifications(client, snapshot);
 
   useEffect(() => {
     if (pausePopoverShouldClose(boardPause)) setPausePopoverOpen(false);
@@ -415,11 +389,6 @@ export function BoardApp() {
     const fallback = missingRouteFallback(page, snapshot, observedTaskIds.current);
     if (fallback !== null) navigate(fallback, "replace");
   }, [loadedWorkItemDetail, page, snapshot, workItemDetailLoadingId]);
-
-  useEffect(() => {
-    if (snapshot === null) return;
-    void notificationLoads.snapshotArrived(snapshot, (token) => loadNotifications(token));
-  }, [loadNotifications, notificationLoads, notificationsAttempt, snapshot]);
 
   const mutate = useCallback(
     async (context: string, operation: () => Promise<unknown>): Promise<ActionResult> => {
@@ -634,32 +603,6 @@ export function BoardApp() {
       context,
       error: result.kind === "not-found" ? "This request is no longer available." : actionErrorMessage(result.error),
     });
-  }
-
-  async function markNotificationRead(notification: RawBoardNotification) {
-    if (markingNotificationId !== null) return;
-    const previous = notifications;
-    notificationLoads.invalidate();
-    setMarkingNotificationId(notification.notificationId);
-    setNotificationsLoading(false);
-    setNotificationsError(null);
-    setNotifications((current) =>
-      current === null
-        ? current
-        : {
-            ...current,
-            unread: current.unread.filter((entry) => entry.notificationId !== notification.notificationId),
-          }
-    );
-    try {
-      await client.markNotificationRead(notification.notificationId, notification.version);
-      await notificationLoads.refresh((token) => loadNotifications(token, true));
-    } catch (caught) {
-      setNotifications(previous);
-      setNotificationsError(caught instanceof Error ? caught.message : "The notification could not be marked read.");
-    } finally {
-      setMarkingNotificationId(null);
-    }
   }
 
   function closeWorkItem() {
@@ -1015,7 +958,7 @@ export function BoardApp() {
                     void markNotificationRead(notification);
                   }}
                   onOpenWorkItem={openWorkItem}
-                  onRetry={() => setNotificationsAttempt((value) => value + 1)}
+                  onRetry={retryNotifications}
                 />
                 {allWorkItems.length > 0 ? (
                   <section aria-labelledby="automation-intake-heading">
