@@ -1680,9 +1680,10 @@ async function openTokenRotationDialog(
   const laneConfig = page.getByLabel(`Fleet lane configuration for ${fixture.lazyManager.agentId}`);
   await expect(laneConfig).toContainText('"agentId": "payment-tools-manager"');
   await expect(laneConfig).toContainText('"workingDirectory": "/absolute/path/to/repository"');
-  await expect(laneConfig).toContainText('"provider": "<codex or claude>"');
+  await expect(laneConfig).toContainText('"runtime": "<codex or claude>"');
+  await expect(laneConfig).toContainText('"launchMode": "local-process"');
   await expect(laneConfig).toContainText("<rotate token to reveal>");
-  await expect(page.getByText(/replace the working-directory and provider placeholders/u)).toBeVisible();
+  await expect(page.getByText(/replace the working-directory and runtime placeholders/u)).toBeVisible();
 
   const rotateToken = page.getByRole("button", { name: "Rotate token", exact: true });
   await expect(rotateToken).toBeVisible();

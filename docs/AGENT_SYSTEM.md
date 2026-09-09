@@ -44,10 +44,12 @@ For a project with several repositories:
 
 1. Add each repository beyond the primary with `POST /v1/projects/{projectId}/repositories`, then read the ids from `GET /v1/projects/{projectId}/repositories`. Creating the project already made its primary, so the list is never empty.
 2. Create one board agent per repository **per role its stages use** with `POST /v1/projects/{projectId}/agents`, including the matching `repositoryId`. Dispatch matches on role and repository together, so a repository with only an engineer implements and then blocks at verification.
-3. Add one lane per agent to [`fleet.json`](../src/server/agents/task-fleet/fleet.example.json). Match its `agentId`, and set `workingDirectory` to that repository's absolute path.
+3. Add one lane per agent to [`fleet.json`](../src/server/agents/task-fleet/fleet.example.json). Match its `agentId`, set `runtime` to the model CLI/profile, set `launchMode` to `local-process` or `container`, and set `workingDirectory` to that repository's absolute path.
 4. Start the fleet with `node build/server/agents/task-fleet/main.js /absolute/path/to/fleet.json`.
 
 The board-to-worker pairing is a convention, not an enforced invariant. The claim names an agent, while [`task-fleet/worker-factory.ts`](../src/server/agents/task-fleet/worker-factory.ts) independently builds the workspace from `workingDirectory`. If the board agent names repository B and the lane points at repository A, B's task can be committed in A's tree while the board records B as its target.
+
+For one compatibility version, fleet config accepts `provider` as an alias for the model `runtime` and accepts `runtime: "local-process" | "container"` as an alias for `launchMode`; either form emits a warning naming the replacement. Those two reserved values always mean the legacy launch-mode key during this window. Other valid `runtime` identifiers mean the model runtime, and mixing old and new keys for either concept is rejected.
 
 ## Diagram mapping
 
@@ -115,9 +117,9 @@ The result is per-criterion `pass`, `fail`, or `unknown`, with evidence and a st
 
 ## Cache-aware scheduling
 
-Cache is a scheduling optimization, not memory or identity. Build the prompt as a stable prefix—tools, stage instructions, skill versions, project conventions—followed by the task-specific brief, handoff, and artifacts. Queue compatible runs by a cache key derived from provider, model, toolset, agent version, skill versions, and project-memory version.
+Cache is a scheduling optimization, not memory or identity. Build the prompt as a stable prefix—tools, stage instructions, skill versions, project conventions—followed by the task-specific brief, handoff, and artifacts. Queue compatible runs by a cache key derived from runtime, model, toolset, agent version, skill versions, and project-memory version.
 
-Anthropic's [prompt cache](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) is an exact-prefix cache with a five-minute default lifetime refreshed on hits and an optional one-hour lifetime. Provider semantics differ, so the scheduler must use provider telemetry rather than assume one TTL. It should batch real compatible work while a prefix is warm, but never keep an idle model session alive or send meaningless heartbeats solely to preserve cache.
+Anthropic's [prompt cache](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) is an exact-prefix cache with a five-minute default lifetime refreshed on hits and an optional one-hour lifetime. Model-vendor semantics differ, so the scheduler must use runtime telemetry rather than assume one TTL. It should batch real compatible work while a prefix is warm, but never keep an idle model session alive or send meaningless heartbeats solely to preserve cache.
 
 ## Current limits
 

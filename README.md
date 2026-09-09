@@ -20,7 +20,7 @@ There are three runtime pieces:
 
 - **Task board** — the authoritative HTTP API and SQLite store.
 - **Task fleet** — one lightweight waiting lane for each configured agent.
-- **Task worker** — claims one wakeup, launches one contained provider process, and records progress or a result.
+- **Task worker** — claims one wakeup, launches one contained model-runtime process, and records progress or a result.
 
 The product deliberately has no deployment endpoint. Agents can implement and review work, but production approval and deployment remain human responsibilities.
 
@@ -129,7 +129,8 @@ The example shows two engineer lanes for two repositories in one project. Delete
       "workerId": "worker-platform-api-engineer",
       "agentId": "platform-api-engineer",
       "token": "replace-with-the-one-time-agent-token-0000000001",
-      "provider": "codex",
+      "runtime": "codex",
+      "launchMode": "local-process",
       "role": "engineer",
       "model": "replace-with-a-codex-model-id",
       "workingDirectory": "/absolute/path/to/platform-api",
@@ -139,7 +140,8 @@ The example shows two engineer lanes for two repositories in one project. Delete
       "workerId": "worker-platform-worker-engineer",
       "agentId": "platform-worker-engineer",
       "token": "replace-with-the-one-time-agent-token-0000000002",
-      "provider": "codex",
+      "runtime": "codex",
+      "launchMode": "local-process",
       "role": "engineer",
       "model": "replace-with-a-codex-model-id",
       "workingDirectory": "/absolute/path/to/platform-worker",
@@ -151,6 +153,8 @@ The example shows two engineer lanes for two repositories in one project. Delete
 
 Every lane needs a distinct `workerId`, `agentId`, token of at least 32 characters, and `statePath`. Agent tokens stay in this local file and never enter the frontend. Closing or updating the frontend does not affect the fleet. Set `STEWARD_TASK_FLEET_CONFIG` instead of passing a positional path if preferred.
 
+`runtime` selects the model CLI/profile, such as `codex` or `claude`. `launchMode` selects where it runs: `local-process` (the default) or `container`. For one compatibility version, the old model key `provider` and the old launch-mode form `runtime: "local-process" | "container"` still load and emit deprecation warnings naming their replacements. Only those two reserved values are treated as the legacy launch-mode form; every other valid `runtime` identifier selects the model runtime. Setting old and new names for the same concept is an error, as is an unknown `launchMode`, so the parser never silently prefers or reinterprets a value.
+
 For several repositories in one project, add each extra repository with `POST /v1/projects/{projectId}/repositories` (`{"name", "path"}`); creating the project already made its primary. `GET /v1/projects/{projectId}/repositories` lists them, primary first, and is where the `repositoryId` values below come from. Both routes are human-only.
 
 Then create one board agent per repository with `POST /v1/projects/{projectId}/agents`, including that repository's `repositoryId` in each request. Use the same `agentId` in `fleet.json`, and set its `workingDirectory` to that repository's absolute path. `repositoryId` belongs only on the board agent; it is not a fleet config field.
@@ -159,7 +163,7 @@ Give every repository a full set of the roles its stages use, not just an engine
 
 This pairing is not enforced. Claims identify the board agent but do not declare the worker's tree. If an agent's `repositoryId` names repository B while its fleet lane points `workingDirectory` at repository A, the board can route B's task to a worker that commits in A.
 
-The top-level runtime and prompt keys are optional. Their defaults, `config/runtimes.json` and `config/prompts.md`, are resolved from the process's current working directory—not from the fleet file's directory. Use absolute `runtimesConfigPath` and `promptsFile` values when starting the fleet outside this repository. The standalone task-worker entrypoint uses the same cwd-relative defaults; override them with `STEWARD_TASK_WORKER_RUNTIMES_CONFIG` and `STEWARD_TASK_WORKER_PROMPTS_FILE`.
+The top-level runtime-profile and prompt keys are optional. Their defaults, `config/runtimes.json` and `config/prompts.md`, are resolved from the process's current working directory—not from the fleet file's directory. Use absolute `runtimesConfigPath` and `promptsFile` values when starting the fleet outside this repository. The standalone task-worker entrypoint uses the same cwd-relative defaults; override them with `STEWARD_TASK_WORKER_RUNTIMES_CONFIG` and `STEWARD_TASK_WORKER_PROMPTS_FILE`.
 
 Each agent may declare `role` as `manager`, `engineer`, or `verifier`. When present, the fleet validates the runtime profile's role and sandbox before the lane can claim work. If omitted, it checks each claimed role immediately before model launch. [`workingDirectory`](src/server/agents/task-fleet/types.ts) is the absolute repository path for the lane; optional local-process `workspaceRoot` creates a separate task workspace per pipeline work item.
 
@@ -171,7 +175,7 @@ Edit prompt templates in `config/prompts.md`: each `## <name>` section contains 
 
 ### Less common environment settings
 
-The task fleet takes worker values from `fleet.json`; an operator sets the equivalent variables only when starting the standalone task-worker entrypoint. `STEWARD_SAFE_PHASE` is included because it matched the source sweep, but it is an internal activity marker rather than an environment variable.
+The task fleet takes worker values from `fleet.json`; an operator sets the equivalent variables only when starting the standalone task-worker entrypoint. Use `STEWARD_TASK_WORKER_RUNTIME` for its model runtime. For one version, `STEWARD_TASK_WORKER_PROVIDER` remains accepted with a deprecation warning; setting both is an error. `STEWARD_SAFE_PHASE` is included because it matched the source sweep, but it is an internal activity marker rather than an environment variable.
 
 | Name                                            | Who sets it                                          | Default                                                            | Required                |
 | ----------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ | ----------------------- |
@@ -190,7 +194,8 @@ The task fleet takes worker values from `fleet.json`; an operator sets the equiv
 | `STEWARD_AGENT_KEYCHAIN_SERVICE`                | Bootstrap operator                                   | `cicada-steward-agent-token`                                       | No                      |
 | `STEWARD_OPERATOR_TOKEN`                        | Bootstrap operator                                   | None                                                               | For `bootstrap:apply`   |
 | `STEWARD_TASK_BOARD_URL`                        | Fleet from `boardUrl`; standalone operator           | None                                                               | For a standalone worker |
-| `STEWARD_TASK_WORKER_PROVIDER`                  | Fleet from `provider`; standalone operator           | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_RUNTIME`                   | Fleet from `runtime`; standalone operator            | None                                                               | For a standalone worker |
+| `STEWARD_TASK_WORKER_PROVIDER`                  | Standalone operator; deprecated runtime alias        | None                                                               | No                      |
 | `STEWARD_TASK_WORKER_MODEL`                     | Fleet from `model`; standalone operator              | None                                                               | For a standalone worker |
 | `STEWARD_TASK_WORKER_ID`                        | Fleet from `workerId`; standalone operator           | None                                                               | For a standalone worker |
 | `STEWARD_TASK_WORKER_AGENT_ID`                  | Fleet from `agentId`; standalone operator            | None                                                               | For a standalone worker |

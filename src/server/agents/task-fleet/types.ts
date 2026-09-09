@@ -1,8 +1,8 @@
 import type { AgentRole } from "#shared/task-board-contract";
 
-export type TaskFleetProvider = string;
+export type TaskFleetRuntime = string;
 
-export type TaskFleetRuntimeKind = "local-process" | "container";
+export type TaskFleetLaunchMode = "local-process" | "container";
 
 export interface TaskFleetContainerLaneConfig {
   readonly workspaceRoot: string;
@@ -15,7 +15,7 @@ export interface TaskFleetAgentConfig {
   readonly workerId: string;
   readonly agentId: string;
   readonly token: string;
-  readonly provider: TaskFleetProvider;
+  readonly runtime: TaskFleetRuntime;
   readonly role?: AgentRole;
   readonly model: string;
   /** For container lanes, workingDirectory is the repository path workspaces are cloned from. */
@@ -26,7 +26,7 @@ export interface TaskFleetAgentConfig {
   readonly longPollMs: number;
   readonly agentTimeoutMs: number | undefined;
   readonly terminationGraceMs: number | undefined;
-  readonly runtime: TaskFleetRuntimeKind;
+  readonly launchMode: TaskFleetLaunchMode;
   readonly container: TaskFleetContainerLaneConfig | undefined;
 }
 

@@ -11,7 +11,7 @@ function config(workspaceRoot?: string): Record<string, unknown> {
         workerId: "worker-pipeline",
         agentId: "engineer-pipeline",
         token: "pipeline-agent-token-0123456789-abcdefghijklmnopqrstuvwxyz",
-        provider: "codex",
+        runtime: "codex",
         model: "codex-model",
         workingDirectory: "/work/repository",
         statePath: "/state/pipeline.json",
@@ -37,7 +37,7 @@ test("local-process lanes optionally accept an absolute workspace root without c
 test("the local-process workspace field remains invalid on container lanes", () => {
   const value = config("/work/local-workspaces");
   const lane = (value.agents as Array<Record<string, unknown>>)[0]!;
-  lane.runtime = "container";
+  lane.launchMode = "container";
   lane.container = { workspaceRoot: "/work/container-workspaces" };
 
   assert.throws(() => parseTaskFleetConfig(value), /workspaceRoot is only valid for local-process lanes/u);

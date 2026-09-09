@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { captureContainerRuntimeVersion } from "#server/agents/task-fleet/worker-factory";
 
-test("captures the provider CLI label and immutable container image identity", async () => {
+test("captures the runtime CLI label and immutable container image identity", async () => {
   const calls: Array<{ command: string; arguments_: readonly string[] }> = [];
   const captured = await captureContainerRuntimeVersion("codex", "steward-agent:test", async (command, arguments_) => {
     calls.push({ command, arguments_ });

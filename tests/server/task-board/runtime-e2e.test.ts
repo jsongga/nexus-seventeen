@@ -397,7 +397,7 @@ function laneConfig(
         workerId: options.workerId,
         agentId: options.agentId,
         token: options.token,
-        provider: "acme",
+        runtime: "acme",
         role: options.role,
         model: options.model,
         workingDirectory: options.workingDirectory,

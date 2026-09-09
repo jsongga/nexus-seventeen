@@ -1,4 +1,4 @@
-export { loadTaskFleetConfig, parseTaskFleetConfig } from "./config.js";
+export { loadTaskFleetConfig, parseTaskFleetConfig, type TaskFleetConfigWarning } from "./config.js";
 export {
   captureContainerRuntimeVersion,
   captureTaskFleetRuntimeVersion,
@@ -15,9 +15,9 @@ export type {
   TaskFleetLaneSnapshot,
   TaskFleetLaneStatus,
   TaskFleetLogger,
-  TaskFleetProvider,
+  TaskFleetLaunchMode,
   TaskFleetRetryConfig,
-  TaskFleetRuntimeKind,
+  TaskFleetRuntime,
   TaskFleetSleeper,
   TaskFleetSnapshot,
   TaskFleetTransientClassifier,

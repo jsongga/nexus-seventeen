@@ -32,7 +32,8 @@ describe("lane configuration state", () => {
       workerId: agent.id,
       agentId: agent.id,
       token: MASKED_LANE_TOKEN,
-      provider: "<codex or claude>",
+      runtime: "<codex or claude>",
+      launchMode: "local-process",
       model: "auto",
       workingDirectory: "/absolute/path/to/repository",
       statePath: "/absolute/path/to/.steward-data/workers/payment-tools-manager.json",
@@ -50,13 +51,13 @@ describe("lane configuration state", () => {
     expect(leftPage.snippet).not.toContain(token);
   });
 
-  it("uses the fleet provider that matches an existing Claude model identity", () => {
+  it("uses the fleet runtime that matches an existing Claude model identity", () => {
     const state = laneConfigurationState({ ...agent, model: "claude-sonnet-4-5" }, null);
-    expect(JSON.parse(state.snippet)).toMatchObject({ provider: "claude", model: "claude-sonnet-4-5" });
+    expect(JSON.parse(state.snippet)).toMatchObject({ runtime: "claude", model: "claude-sonnet-4-5" });
   });
 
-  it("uses the fleet provider that matches an explicit Codex model identity", () => {
+  it("uses the fleet runtime that matches an explicit Codex model identity", () => {
     const state = laneConfigurationState({ ...agent, model: "codex-mini" }, null);
-    expect(JSON.parse(state.snippet)).toMatchObject({ provider: "codex", model: "codex-mini" });
+    expect(JSON.parse(state.snippet)).toMatchObject({ runtime: "codex", model: "codex-mini" });
   });
 });

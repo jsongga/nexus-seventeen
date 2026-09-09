@@ -6,6 +6,7 @@ import type {
   TaskFleetAgentConfig,
   TaskFleetConfig,
   TaskFleetContainerLaneConfig,
+  TaskFleetLaunchMode,
   TaskFleetRetryConfig,
 } from "./types.js";
 
@@ -14,6 +15,15 @@ const IDENTIFIER = new RegExp(IDENTIFIER_PATTERN, "u");
 const CONTAINER_HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
 const DEFAULT_LONG_POLL_MS = 30_000;
 const DEFAULT_RETRY: TaskFleetRetryConfig = Object.freeze({ initialDelayMs: 1_000, maximumDelayMs: 60_000 });
+const LEGACY_LAUNCH_MODES: readonly TaskFleetLaunchMode[] = Object.freeze(["local-process", "container"]);
+
+export type TaskFleetConfigWarning = (message: string) => void;
+
+const emitConfigWarning: TaskFleetConfigWarning = (message) =>
+  process.emitWarning(message, {
+    type: "DeprecationWarning",
+    code: "TASK_FLEET_CONFIG_ALIAS",
+  });
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -132,32 +142,72 @@ function containerConfig(value: unknown, label: string): TaskFleetContainerLaneC
   });
 }
 
-function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
+function isLegacyLaunchMode(value: unknown): value is TaskFleetLaunchMode {
+  return (LEGACY_LAUNCH_MODES as readonly unknown[]).includes(value);
+}
+
+function agentConfig(value: unknown, index: number, warnings: string[]): TaskFleetAgentConfig {
   const label = `config.agents[${index}]`;
   const item = exact(
     value,
-    ["workerId", "agentId", "token", "provider", "model", "workingDirectory", "statePath"],
-    ["role", "longPollMs", "agentTimeoutMs", "terminationGraceMs", "runtime", "container", "workspaceRoot"],
+    ["workerId", "agentId", "token", "model", "workingDirectory", "statePath"],
+    [
+      "runtime",
+      "launchMode",
+      "provider",
+      "role",
+      "longPollMs",
+      "agentTimeoutMs",
+      "terminationGraceMs",
+      "container",
+      "workspaceRoot",
+    ],
     label
   );
-  const runtime = item.runtime === undefined ? "local-process" : item.runtime;
-  if (runtime !== "local-process" && runtime !== "container")
-    throw new Error(`${label}.runtime must be local-process or container`);
-  if (runtime === "container" && item.container === undefined)
+
+  const hasProvider = Object.hasOwn(item, "provider");
+  const hasRuntime = Object.hasOwn(item, "runtime");
+  const legacyLaunchMode = isLegacyLaunchMode(item.runtime) ? item.runtime : undefined;
+  if (hasProvider && hasRuntime && legacyLaunchMode === undefined) {
+    throw new Error(`${label} cannot set both provider and runtime; provider is deprecated, use runtime`);
+  }
+  if (legacyLaunchMode !== undefined && Object.hasOwn(item, "launchMode")) {
+    throw new Error(
+      `${label} cannot set both runtime as a legacy launch-mode key and launchMode; runtime is deprecated for launch mode, use launchMode`
+    );
+  }
+  if (!hasProvider && (!hasRuntime || legacyLaunchMode !== undefined)) {
+    throw new Error(
+      legacyLaunchMode === undefined
+        ? `${label} is missing runtime; provider is accepted as a deprecated alias`
+        : `${label}.runtime=${JSON.stringify(legacyLaunchMode)} is the deprecated launch-mode key; add the model runtime as ${label}.runtime and move the launch mode to ${label}.launchMode`
+    );
+  }
+
+  const runtime = identifier(
+    hasProvider ? item.provider : item.runtime,
+    hasProvider ? `${label}.provider` : `${label}.runtime`
+  );
+  const launchMode = legacyLaunchMode ?? (item.launchMode === undefined ? "local-process" : item.launchMode);
+  if (!isLegacyLaunchMode(launchMode)) throw new Error(`${label}.launchMode must be local-process or container`);
+  if (launchMode === "container" && item.container === undefined)
     throw new Error(`${label}.container is required for container lanes`);
-  if (runtime !== "container" && item.container !== undefined)
+  if (launchMode !== "container" && item.container !== undefined)
     throw new Error(`${label}.container is only valid for container lanes`);
-  if (runtime === "container" && item.workspaceRoot !== undefined) {
+  if (launchMode === "container" && item.workspaceRoot !== undefined) {
     throw new Error(`${label}.workspaceRoot is only valid for local-process lanes`);
   }
-  const provider = identifier(item.provider, `${label}.provider`);
   const token = text(item.token, `${label}.token`, 512);
   if (token.length < 32) throw new Error(`${label}.token must contain at least 32 characters`);
+  if (hasProvider) warnings.push(`${label}.provider is deprecated; use ${label}.runtime`);
+  if (legacyLaunchMode !== undefined) {
+    warnings.push(`${label}.runtime as a launch-mode key is deprecated; use ${label}.launchMode`);
+  }
   return Object.freeze({
     workerId: identifier(item.workerId, `${label}.workerId`),
     agentId: identifier(item.agentId, `${label}.agentId`),
     token,
-    provider,
+    runtime,
     ...(item.role === undefined ? {} : { role: agentRole(item.role, `${label}.role`) }),
     model: text(item.model, `${label}.model`, 128),
     workingDirectory: absolutePath(item.workingDirectory, `${label}.workingDirectory`),
@@ -171,8 +221,8 @@ function agentConfig(value: unknown, index: number): TaskFleetAgentConfig {
         : integer(item.longPollMs, `${label}.longPollMs`, 1_000, 30_000),
     agentTimeoutMs: optionalInteger(item.agentTimeoutMs, `${label}.agentTimeoutMs`, 1_000, 24 * 60 * 60_000),
     terminationGraceMs: optionalInteger(item.terminationGraceMs, `${label}.terminationGraceMs`, 10, 60_000),
-    runtime,
-    container: runtime === "container" ? containerConfig(item.container, `${label}.container`) : undefined,
+    launchMode,
+    container: launchMode === "container" ? containerConfig(item.container, `${label}.container`) : undefined,
   });
 }
 
@@ -184,7 +234,10 @@ function unique(values: readonly TaskFleetAgentConfig[], field: "workerId" | "ag
   }
 }
 
-export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
+export function parseTaskFleetConfig(
+  value: unknown,
+  warning: TaskFleetConfigWarning = emitConfigWarning
+): TaskFleetConfig {
   const config = record(value, "config");
   if ("promptsRoot" in config) throw new Error("config.promptsRoot is no longer supported; use config.promptsFile");
   const item = exact(
@@ -197,11 +250,12 @@ export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
   if (!Array.isArray(item.agents) || item.agents.length < 1 || item.agents.length > 128) {
     throw new Error("config.agents must contain between 1 and 128 agents");
   }
-  const agents = Object.freeze(item.agents.map(agentConfig));
+  const warnings: string[] = [];
+  const agents = Object.freeze(item.agents.map((agent, index) => agentConfig(agent, index, warnings)));
   unique(agents, "workerId");
   unique(agents, "agentId");
   unique(agents, "statePath");
-  return Object.freeze({
+  const parsed = Object.freeze({
     version: 1,
     boardUrl: boardUrl(item.boardUrl),
     runtimesConfigPath:
@@ -212,9 +266,14 @@ export function parseTaskFleetConfig(value: unknown): TaskFleetConfig {
     retry: retryConfig(item.retry),
     agents,
   });
+  for (const message of warnings) warning(message);
+  return parsed;
 }
 
-export async function loadTaskFleetConfig(path: string): Promise<TaskFleetConfig> {
+export async function loadTaskFleetConfig(
+  path: string,
+  warning: TaskFleetConfigWarning = emitConfigWarning
+): Promise<TaskFleetConfig> {
   if (path.length < 1 || path.includes("\0")) throw new Error("Task fleet config path is invalid");
   const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
@@ -229,7 +288,7 @@ export async function loadTaskFleetConfig(path: string): Promise<TaskFleetConfig
       if (error instanceof SyntaxError) throw new Error("Task fleet config is not valid JSON", { cause: error });
       throw error;
     }
-    return parseTaskFleetConfig(parsed);
+    return parseTaskFleetConfig(parsed, warning);
   } finally {
     await handle.close();
   }

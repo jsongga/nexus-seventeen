@@ -242,7 +242,7 @@ function AgentChat({
                 </div>
                 <p className="mt-1 text-xs leading-5 text-muted">
                   Paste this agent object into the fleet config’s <code>agents</code> array and replace the
-                  working-directory and provider placeholders.
+                  working-directory and runtime placeholders.
                 </p>
               </div>
               <Button

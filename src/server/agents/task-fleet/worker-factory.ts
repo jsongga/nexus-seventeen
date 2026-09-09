@@ -30,7 +30,7 @@ import type {
   ManagedTaskWorker,
   TaskFleetAgentConfig,
   TaskFleetErrorClassifier,
-  TaskFleetProvider,
+  TaskFleetRuntime,
   TaskFleetTransientClassifier,
 } from "./types.js";
 
@@ -111,7 +111,7 @@ export async function captureTaskFleetRuntimeVersion(
 
 /** Runtime pin and full immutable image ID from one `docker image inspect`; null when unreadable. */
 export async function captureContainerRuntimeVersion(
-  runtimeId: TaskFleetProvider,
+  runtimeId: TaskFleetRuntime,
   image: string,
   runner: TaskFleetVersionRunner = runDockerInspect
 ): Promise<ContainerRuntimeIdentity | null> {
@@ -164,7 +164,7 @@ async function createLocalProcessTaskFleetWorker(
     board: new HttpTaskBoardClient({ baseUrl: boardUrl, token: config.token }),
     launcher,
     pinned: {
-      runtime: config.provider,
+      runtime: config.runtime,
       ...(runtimeVersion === null ? {} : { runtimeVersion }),
       model: config.model,
       promptsSha: prompts.promptsSha,
@@ -198,7 +198,7 @@ async function createContainerTaskFleetWorker(
     image,
     allowedHosts: [...DEFAULT_ALLOWED_HOSTS, ...lane.extraAllowedHosts],
   });
-  const runtimeIdentity = await captureContainerRuntimeVersion(config.provider, image);
+  const runtimeIdentity = await captureContainerRuntimeVersion(config.runtime, image);
   if (runtimeIdentity === null) {
     throw new Error(`container image identity could not be inspected: ${image}`);
   }
@@ -229,7 +229,7 @@ async function createContainerTaskFleetWorker(
     board: new HttpTaskBoardClient({ baseUrl: boardUrl, token: config.token }),
     launcher,
     pinned: {
-      runtime: config.provider,
+      runtime: config.runtime,
       runtimeVersion: runtimeIdentity.runtimeVersion,
       model: config.model,
       promptsSha: prompts.promptsSha,
@@ -254,20 +254,20 @@ export async function createTaskFleetWorker(
   boardUrl: string,
   options: CreateTaskFleetWorkerOptions = {}
 ): Promise<ManagedTaskWorker> {
-  const adapter = (options.registry ?? defaultRuntimeRegistry()).get(config.provider);
-  if (adapter === null) throw new Error(`Unknown runtime adapter: ${config.provider}`);
-  const profile = (await runtimeProfiles(options)).runtimes.get(config.provider);
-  if (profile === undefined) throw new Error(`Unknown runtime profile: ${config.provider}`);
+  const adapter = (options.registry ?? defaultRuntimeRegistry()).get(config.runtime);
+  if (adapter === null) throw new Error(`Unknown runtime adapter: ${config.runtime}`);
+  const profile = (await runtimeProfiles(options)).runtimes.get(config.runtime);
+  if (profile === undefined) throw new Error(`Unknown runtime profile: ${config.runtime}`);
   if (config.role !== undefined) adapter.assertRole(profile, config.role);
   (options.logRuntimeProfile ?? ((line: string) => process.stderr.write(`${line}\n`)))(
-    `[task-fleet] runtime_profile runtime=${JSON.stringify(config.provider)}` +
+    `[task-fleet] runtime_profile runtime=${JSON.stringify(config.runtime)}` +
       ` permissionModel=${JSON.stringify(profile.permissionModel)}` +
       ` mcp=${String(profile.mcp)}` +
       ` toolCallGranularity=${JSON.stringify(profile.toolCallGranularity)}` +
       ` contextNotes=${JSON.stringify(profile.contextNotes)}`
   );
   const prompts = (options.loadPrompts ?? PromptRegistry.loadSync)(resolve(options.promptsFile ?? "config/prompts.md"));
-  return config.runtime === "container"
+  return config.launchMode === "container"
     ? createContainerTaskFleetWorker(config, boardUrl, adapter, profile, prompts)
     : createLocalProcessTaskFleetWorker(config, boardUrl, adapter, profile, prompts);
 }

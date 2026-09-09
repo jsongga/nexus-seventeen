@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { loadRuntimeProfiles } from "../runtime/profiles.js";
 import { defaultRuntimeRegistry } from "../runtime/registry.js";
 import { ContainedCliAgentLauncher } from "./contained-cli-launcher.js";
+import { taskWorkerRuntimeFromEnvironment } from "./environment.js";
 import { HttpTaskBoardClient } from "./http-board-client.js";
 import { PromptRegistry } from "./prompt-registry.js";
 import { TaskWorker } from "./worker.js";
@@ -19,16 +20,16 @@ function optionalInteger(name: string): number | undefined {
   return Number(value);
 }
 
-const provider = required("STEWARD_TASK_WORKER_PROVIDER");
-const adapter = defaultRuntimeRegistry().get(provider);
-if (adapter === null) throw new Error(`Unknown runtime adapter: ${provider}`);
+const runtime = taskWorkerRuntimeFromEnvironment();
+const adapter = defaultRuntimeRegistry().get(runtime);
+if (adapter === null) throw new Error(`Unknown runtime adapter: ${runtime}`);
 const runtimesConfigSource = process.env.STEWARD_TASK_WORKER_RUNTIMES_CONFIG;
 if (runtimesConfigSource !== undefined && runtimesConfigSource.length === 0) {
   throw new Error("STEWARD_TASK_WORKER_RUNTIMES_CONFIG must not be empty");
 }
 const runtimesConfigPath = resolve(runtimesConfigSource ?? "config/runtimes.json");
-const profile = (await loadRuntimeProfiles(runtimesConfigPath)).runtimes.get(provider);
-if (profile === undefined) throw new Error(`Unknown runtime profile: ${provider}`);
+const profile = (await loadRuntimeProfiles(runtimesConfigPath)).runtimes.get(runtime);
+if (profile === undefined) throw new Error(`Unknown runtime profile: ${runtime}`);
 const promptsFileSource = process.env.STEWARD_TASK_WORKER_PROMPTS_FILE;
 if (promptsFileSource !== undefined && promptsFileSource.length === 0) {
   throw new Error("STEWARD_TASK_WORKER_PROMPTS_FILE must not be empty");
@@ -58,7 +59,7 @@ const worker = await TaskWorker.create({
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(terminationGraceMs === undefined ? {} : { terminationGraceMs }),
   }),
-  pinned: { runtime: provider, model, promptsSha: prompts.promptsSha },
+  pinned: { runtime, model, promptsSha: prompts.promptsSha },
   ...(longPollMs === undefined ? {} : { longPollMs }),
 });
 

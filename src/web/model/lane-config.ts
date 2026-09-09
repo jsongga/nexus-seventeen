@@ -9,7 +9,7 @@ interface LaneConfigurationState {
 
 export function laneConfigurationState(agent: BoardAgent, visibleToken: string | null): LaneConfigurationState {
   const token = visibleToken ?? MASKED_LANE_TOKEN;
-  const provider =
+  const runtime =
     agent.model !== null && /^claude(?:-|$)/iu.test(agent.model)
       ? "claude"
       : agent.model !== null && /^codex(?:-|$)/iu.test(agent.model)
@@ -22,7 +22,8 @@ export function laneConfigurationState(agent: BoardAgent, visibleToken: string |
         workerId: agent.id,
         agentId: agent.id,
         token,
-        provider,
+        runtime,
+        launchMode: "local-process",
         model: agent.model ?? "auto",
         workingDirectory: "/absolute/path/to/repository",
         statePath: `/absolute/path/to/.steward-data/workers/${agent.id.replaceAll("/", "-")}.json`,
