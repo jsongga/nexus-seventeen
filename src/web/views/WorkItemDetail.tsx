@@ -6,7 +6,6 @@ import type { PipelineSummary } from "@shared/task-board-contract";
 import { fieldsAreDirty } from "../components/dialog-stack";
 import { Button, Card, FieldLabel, InlineActionErrors, Modal, Pill, cn, inputClass } from "../components/ui";
 import { BoardApiError, type TaskBoardClient } from "../data/client";
-import type { RawWorkItemAudit } from "../data/parse";
 import {
   deriveWorkItemDetailAffordances,
   contractApprovalIsReady,
@@ -28,6 +27,7 @@ import type {
 } from "../types";
 import { FinalApprovalActions, FinalRejectionForm, WorkItemFooterActions } from "./work-item/approval";
 import { useProposedWorkflow } from "./work-item/use-proposed-workflow";
+import { useWorkItemAudit } from "./work-item/use-work-item-audit";
 import { AttestDeploymentForm, ContractAttestationGate } from "./work-item/deployment";
 import { GapReportSection, PipelineSummaryDetails } from "./work-item/evidence";
 import {
@@ -119,8 +119,12 @@ export function WorkItemDetail({
   const [pipelineSummaryError, setPipelineSummaryError] = useState<string | null>(null);
   const [pipelineSummaryAttempt, setPipelineSummaryAttempt] = useState(0);
   const { workflow, workflowState, workflowError, retryWorkflow } = useProposedWorkflow(client, workItem);
-  const [audit, setAudit] = useState<RawWorkItemAudit | null>(null);
-  const [auditState, setAuditState] = useState<"loading" | "ready" | "error">("loading");
+  const { audit: renderedAudit, auditState: renderedAuditState } = useWorkItemAudit(
+    client,
+    workItem.id,
+    workItem.version,
+    snapshotRevision
+  );
   const [gapReportContent, setGapReportContent] = useState<string | null>(null);
   const [gapReportState, setGapReportState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [gapReportError, setGapReportError] = useState<string | null>(null);
@@ -135,7 +139,6 @@ export function WorkItemDetail({
   const familyHasLastGoodRef = useRef(seededFamily.children.length > 0);
   const familyNotParentRef = useRef(seededFamily.parentAbsent);
   const pipelineSummaryWorkItemIdRef = useRef(workItem.id);
-  const auditWorkItemIdRef = useRef(workItem.id);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const mergeConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
   const archiveConfirmationAnchorRef = useRef<HTMLButtonElement>(null);
@@ -195,9 +198,6 @@ export function WorkItemDetail({
   const renderedPipelineSummary = pipelineSummaryBelongsToWorkItem ? pipelineSummary : null;
   const renderedPipelineSummaryState = pipelineSummaryBelongsToWorkItem ? pipelineSummaryState : "loading";
   const renderedPipelineSummaryError = pipelineSummaryBelongsToWorkItem ? pipelineSummaryError : null;
-  const auditBelongsToWorkItem = auditWorkItemIdRef.current === workItem.id;
-  const renderedAudit = auditBelongsToWorkItem ? audit : null;
-  const renderedAuditState = auditBelongsToWorkItem ? auditState : "loading";
 
   useEffect(() => {
     setAnswer("");
@@ -296,12 +296,6 @@ export function WorkItemDetail({
   }, [workItem.id]);
 
   useEffect(() => {
-    auditWorkItemIdRef.current = workItem.id;
-    setAudit(null);
-    setAuditState("loading");
-  }, [workItem.id]);
-
-  useEffect(() => {
     if (workItem.taskType !== "onboarding") {
       setGapReportContent(null);
       setGapReportError(null);
@@ -338,23 +332,6 @@ export function WorkItemDetail({
     if (typeof window.matchMedia !== "function") return;
     if (window.matchMedia("(max-width: 1279px)").matches) detailHeadingRef.current?.focus();
   }, [workItem.id]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setAuditState(renderedAudit === null ? "loading" : "ready");
-    void client
-      .getWorkItemAudit(workItem.id, controller.signal)
-      .then((next) => {
-        if (controller.signal.aborted) return;
-        setAudit(next);
-        setAuditState("ready");
-      })
-      .catch(() => {
-        if (controller.signal.aborted) return;
-        setAuditState("error");
-      });
-    return () => controller.abort();
-  }, [client, snapshotRevision, workItem.id, workItem.version]);
 
   useEffect(() => {
     if (!pipelineSummaryVisible) {
