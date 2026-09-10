@@ -322,7 +322,9 @@ The roadmap's original premise for this item was wrong and the split proved it:
 `WorkItemDetail`'s five test files overlap on four symbol groups, so the "seam
 they already use" does not exist — a test file names a scenario, not a module.
 
-**14. The two web shells** _(proposed 2026-09-02)_ — `WorkItemDetail` (1,169
+**14. The two web shells** _(shipped 2026-09-09; spec
+`docs/superpowers/specs/2026-09-08-web-shells.md`. Two of five BoardApp clusters
+were seams; the rest are navigation. A line-count ratchet now holds the result.)_ — `WorkItemDetail` (1,169
 lines, 40 hook calls, 46 local declarations before ~676 lines of JSX) and
 `BoardApp` (1,184, same shape) reduce to composition over extracted hooks. This
 is the only part of the web work where a mistake is invisible: moving a
@@ -350,7 +352,8 @@ modelled but not executable — across projects it works, because a project stil
 determines a repository there. Exit: the campaign 16 arc in `pipeline-e2e`
 un-skips and passes.
 
-**15. The task-board client factory** _(proposed 2026-09-06)_ —
+**15. The task-board client factory** _(shipped 2026-09-09; spec
+`docs/superpowers/specs/2026-09-09-client-factory.md`)_ —
 `createTaskBoardClient` is 582 of `data/client.ts`'s 832 lines: one factory, 48
 methods, all closing over five mutable `Map`s and a shared `request`. Campaign 13
 extracted what was mechanical (agent-query prompts, response envelopes) and
