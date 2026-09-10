@@ -114,9 +114,16 @@ src/web/board/use-board-pause.ts	156
 src/web/components/dialog-stack.ts	271
 src/web/components/popover.tsx	146
 src/web/components/ui.tsx	504
-src/web/data/client.ts	877
+src/web/data/client.ts	278
 src/web/data/client/agent-query.ts	73
+src/web/data/client/agents.ts	38
+src/web/data/client/automation.ts	31
+src/web/data/client/board.ts	223
+src/web/data/client/context.ts	33
 src/web/data/client/envelopes.ts	194
+src/web/data/client/projects.ts	168
+src/web/data/client/tasks.ts	186
+src/web/data/client/work-items.ts	159
 src/web/data/date-format.ts	42
 src/web/data/parse.ts	84
 src/web/data/parse/automation.ts	113

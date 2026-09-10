@@ -649,6 +649,31 @@ describe("task-board protocol projection", () => {
 });
 
 describe("task-board HTTP client", () => {
+  it("shares snapshot cache state with task commands across client groups", async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    const request = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const path = String(url);
+      calls.push([path, init]);
+      if (path.endsWith("/v1/projects")) return new Response(JSON.stringify({ projects: [project] }));
+      if (path.endsWith("/v1/work-items")) return new Response(JSON.stringify({ workItems: [] }));
+      if (path.endsWith("/v1/projects/project-one/board")) {
+        return new Response(JSON.stringify({ ...boardSnapshot(), openQuestions: [{ ...question, version: 7 }] }));
+      }
+      if (path.includes("/messages?after=0")) return new Response(JSON.stringify({ messages: [], cursor: 0 }));
+      return new Response("{}");
+    });
+    const client = createTaskBoardClient({ fetch: request as unknown as typeof fetch });
+
+    await client.getSnapshot();
+    await client.answerQuestion(question.questionId, { answer: "Keep the existing payment method." });
+
+    const answer = calls.find(([url]) => url.endsWith(`/v1/questions/${question.questionId}/answer`));
+    expect(JSON.parse(String(answer?.[1]?.body))).toEqual({
+      answer: "Keep the existing payment method.",
+      version: 7,
+    });
+  });
+
   it("loads and validates host project roots", async () => {
     const request = vi.fn(
       async () =>

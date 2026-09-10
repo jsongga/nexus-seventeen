@@ -8,7 +8,6 @@ import type {
   RejectPlanRevisionResponse,
   UpdateRepositoryRequest,
 } from "@shared/task-board-contract";
-import { parseRepositoryEntity } from "@shared/task-board-contract/validate";
 import type {
   AgentQueryConversationTurn,
   AgentRole,
@@ -30,60 +29,24 @@ import type {
   ProjectWorkflow,
   RotateAgentTokenResult,
   SaveAutomationConfigurationInput,
-  TaskKind,
   WorkflowEvent,
 } from "../types";
-import {
-  parseBoardNotification,
-  parseBoardPause,
-  parseDeployAttestationResult,
-  parseFindingsLedger,
-  parseMessage,
-  parseParksLedger,
-  parseProject,
-  parseWorkItemAudit,
-} from "./parse/entities";
-import { boundedText, integer, parseArray, parseRecord } from "./parse/scalars";
-import {
-  maximumRawWorkItems,
-  maximumTaskMessages,
-  maximumWorkItemPages,
-  type RawBoardNotification,
-  type RawBoardPause,
-  type RawFindingsLedger,
-  type RawMessage,
-  type RawParksLedger,
-  type RawTask,
-  type RawWorkItem,
-  type RawWorkItemAudit,
+import { parseRecord } from "./parse/scalars";
+import type {
+  RawBoardNotification,
+  RawBoardPause,
+  RawFindingsLedger,
+  RawParksLedger,
+  RawWorkItemAudit,
 } from "./parse/types";
-import { parsePipelineSummary, parseProjectArtifact, parseRawBoard, parseWorkflowEvent } from "./parse/workflow";
-import { normalize } from "../model/project";
-import { taskMessagePageSize } from "./wire";
 import type { InterruptRunResult } from "./client/envelopes";
-import { SseFrameParser } from "./sse";
-import {
-  agentQueryConversationContextMarker,
-  agentQueryRoutingContextMarker,
-  appendAgentQuerySection,
-  maximumAgentQueryObjectiveCharacters,
-  recentAgentQueryConversation,
-} from "./client/agent-query";
-import {
-  automationConfigurationFromEnvelope,
-  automationConfigurationUpdateBody,
-  childrenFromEnvelope,
-  dependenciesFromEnvelope,
-  interruptRunFromEnvelope,
-  parseHostDirectoryListing,
-  parseHostProjectRoot,
-  planRejectionFromEnvelope,
-  projectFromEnvelope,
-  tokenRotationFromEnvelope,
-  workItemFromEnvelope,
-  workItemPageFromEnvelope,
-  workflowFromEnvelope,
-} from "./client/envelopes";
+import { createAgentMethods } from "./client/agents";
+import { createAutomationMethods } from "./client/automation";
+import { createBoardMethods } from "./client/board";
+import { type TaskBoardClientContext } from "./client/context";
+import { createProjectMethods } from "./client/projects";
+import { createTaskMethods } from "./client/tasks";
+import { createWorkItemMethods } from "./client/work-items";
 
 /* —— Moved modules —— */
 
@@ -95,39 +58,7 @@ export {
   agentQueryRoutingContextMarker,
 } from "./client/agent-query";
 export { parseBoardSnapshot, type InterruptRunResult } from "./client/envelopes";
-
-/* —— Browser utilities —— */
-
-export function randomUuid(): string {
-  const source = globalThis.crypto;
-  if (typeof source?.randomUUID === "function") return source.randomUUID();
-  // Older secure contexts may lack randomUUID; retain cryptographic IDs rather than falling back to Math.random.
-  if (typeof source?.getRandomValues !== "function") {
-    throw new Error("This browser cannot generate secure random identifiers");
-  }
-  const bytes = source.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0"));
-  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
-}
-
-async function mapWithConcurrency<T, R>(
-  values: T[],
-  concurrency: number,
-  operation: (value: T) => Promise<R>
-): Promise<R[]> {
-  const result = new Array<R>(values.length);
-  let nextIndex = 0;
-  async function worker(): Promise<void> {
-    while (nextIndex < values.length) {
-      const index = nextIndex++;
-      result[index] = await operation(values[index]!);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
-  return result;
-}
+export { randomUuid } from "./client/tasks";
 
 /* —— Public client contract —— */
 
@@ -215,12 +146,6 @@ export interface TaskBoardClient {
 
 /* —— Transport boundary —— */
 
-function taskCommandVersion(value: unknown, path: string): number {
-  const version = integer(value, path);
-  if (version < 1) throw new Error(`${path} must be a positive safe integer`);
-  return version;
-}
-
 async function errorDetails(response: Response): Promise<{ message: string; code: string | null }> {
   const fallback = `Task board request failed (${response.status})`;
   try {
@@ -233,23 +158,6 @@ async function errorDetails(response: Response): Promise<{ message: string; code
   } catch {
     return { message: fallback, code: null };
   }
-}
-
-function clientEventId(): string {
-  return `ui-${randomUuid()}`;
-}
-
-function repositoryFromEnvelope(value: unknown, path: string): BoardRepository {
-  const envelope = parseRecord(value, path);
-  const repository = parseRepositoryEntity(envelope.repository, `${path}.repository`);
-  return {
-    id: repository.repositoryId,
-    projectId: repository.projectId,
-    name: repository.name,
-    path: repository.path,
-    isPrimary: repository.isPrimary,
-    version: repository.version,
-  };
 }
 
 // Remote boards require HTTPS; plain HTTP is accepted only for loopback development.
@@ -282,11 +190,6 @@ export function createTaskBoardClient(
 ): TaskBoardClient {
   const baseUrl = safeBaseUrl(options.baseUrl ?? "");
   const requestFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  const agentRoles = new Map<string, AgentRole>();
-  const questionVersions = new Map<string, number>();
-  const taskAgents = new Map<string, string>();
-  const taskPolicies = new Map<string, Readonly<{ kind: TaskKind; requiredRole: AgentRole | null }>>();
-  const runAgents = new Map<string, string>();
 
   async function request(path: string, init?: RequestInit): Promise<Response> {
     // Cross-host boards must not receive ambient browser credentials or referrer details.
@@ -308,570 +211,68 @@ export function createTaskBoardClient(
     return response;
   }
 
-  async function json(path: string, init?: RequestInit): Promise<unknown> {
-    return request(path, init).then((response) => response.json());
-  }
-
-  async function post(path: string, body: unknown, idempotencyKey?: string): Promise<void> {
-    await request(path, {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: idempotencyKey ? { "idempotency-key": idempotencyKey } : undefined,
-    });
-  }
-
-  async function taskMessages(task: RawTask, signal?: AbortSignal): Promise<RawMessage[]> {
-    const messages: RawMessage[] = [];
-    let after = 0;
-    while (true) {
-      const envelope = parseRecord(
-        await json(`/v1/tasks/${encodeURIComponent(task.taskId)}/messages?after=${after}`, { signal }),
-        "messages response"
-      );
-      const page = parseArray(envelope.messages, "messages response.messages", parseMessage);
-      const cursor = integer(envelope.cursor, "messages response.cursor");
-      if (page.length > taskMessagePageSize) throw new Error("messages response exceeded the page size limit");
-      if (cursor < after) throw new Error("messages response cursor moved backwards");
-      if (page.length === 0) {
-        if (cursor !== after) throw new Error("messages response cursor advanced without messages");
-        return messages;
-      }
-      if (cursor === after) throw new Error("messages response cursor did not advance");
-
-      let previousSequence = after;
-      for (const message of page) {
-        if (message.taskId !== task.taskId || message.projectId !== task.projectId) {
-          throw new Error("messages response belongs to another task or project");
-        }
-        if (message.sequence <= previousSequence) throw new Error("messages response is not in chronological order");
-        previousSequence = message.sequence;
-      }
-      if (cursor !== previousSequence) throw new Error("messages response cursor does not match its final message");
-      if (messages.length + page.length > maximumTaskMessages) {
-        throw new Error(`messages response exceeded the ${maximumTaskMessages}-message task limit`);
-      }
-      messages.push(...page);
-      if (page.length < taskMessagePageSize) return messages;
-      after = cursor;
-    }
-  }
-
-  async function paginatedWorkItems(initialValue: unknown, signal?: AbortSignal): Promise<RawWorkItem[]> {
-    const merged: RawWorkItem[] = [];
-    const positionsById = new Map<string, number>();
-    const seenCursors = new Set<string>();
-    let value = initialValue;
-    let pages = 0;
-    let rawRows = 0;
-
-    while (true) {
-      pages += 1;
-      const page = workItemPageFromEnvelope(value, `work items response page ${pages}`);
-      rawRows += page.workItems.length;
-      if (rawRows > maximumRawWorkItems) {
-        throw new Error(
-          `work items response exceeded the ${maximumRawWorkItems.toLocaleString()}-record raw pagination limit`
-        );
-      }
-      for (const workItem of page.workItems) {
-        const position = positionsById.get(workItem.workItemId);
-        if (position === undefined) {
-          positionsById.set(workItem.workItemId, merged.length);
-          merged.push(workItem);
-        } else if (workItem.version > merged[position]!.version) {
-          merged[position] = workItem;
-        }
-      }
-
-      const cursor = page.nextCursor;
-      if (cursor === null) return merged;
-      if (seenCursors.has(cursor)) throw new Error("work items response repeated a pagination cursor");
-      seenCursors.add(cursor);
-      if (pages >= maximumWorkItemPages || rawRows >= maximumRawWorkItems) {
-        throw new Error(
-          `work items response exceeded the ${maximumWorkItemPages}-page or ${maximumRawWorkItems.toLocaleString()}-record pagination limit`
-        );
-      }
-      value = await json(`/v1/work-items?cursor=${encodeURIComponent(cursor)}`, { signal });
-    }
-  }
+  const context: TaskBoardClientContext = {
+    request,
+    agentRoles: new Map(),
+    questionVersions: new Map(),
+    taskAgents: new Map(),
+    taskPolicies: new Map(),
+    runAgents: new Map(),
+  };
+  const boardMethods = createBoardMethods(context);
+  const workItemMethods = createWorkItemMethods(context);
+  const automationMethods = createAutomationMethods(context);
+  const projectMethods = createProjectMethods(context);
+  const agentMethods = createAgentMethods(context);
+  const taskMethods = createTaskMethods(context);
 
   return {
-    async getBoardPause(signal) {
-      return parseBoardPause(await json("/v1/board/pause", { signal }), "board pause response");
-    },
-    async setBoardPause(input) {
-      const reason = input.reason === null ? null : boundedText(input.reason.trim(), "board pause reason", 500);
-      return parseBoardPause(
-        await json("/v1/board/pause", {
-          method: "POST",
-          body: JSON.stringify({
-            reason,
-            version: integer(input.version, "board pause.version", 1),
-          }),
-        }),
-        "board pause response"
-      );
-    },
-    async resumeBoard(input) {
-      return parseBoardPause(
-        await json("/v1/board/resume", {
-          method: "POST",
-          body: JSON.stringify({ version: integer(input.version, "board resume.version", 1) }),
-        }),
-        "board resume response"
-      );
-    },
-    async getFindingsLedger(projectId, signal) {
-      const query = projectId === undefined ? "" : `?projectId=${encodeURIComponent(projectId)}`;
-      return parseFindingsLedger(await json(`/v1/ledgers/findings${query}`, { signal }), "findings ledger response");
-    },
-    async getParksLedger(signal) {
-      return parseParksLedger(await json("/v1/ledgers/parks", { signal }), "parks ledger response");
-    },
-    async getNotifications(signal) {
-      const envelope = parseRecord(await json("/v1/notifications", { signal }), "notifications response");
-      const unread = parseArray(envelope.unread, "notifications response.unread", parseBoardNotification);
-      const recentRead = parseArray(envelope.recentRead, "notifications response.recentRead", parseBoardNotification);
-      if (unread.length > 100) throw new Error("notifications response.unread cannot contain more than 100 records");
-      if (recentRead.length > 50)
-        throw new Error("notifications response.recentRead cannot contain more than 50 records");
-      return { unread, recentRead };
-    },
-    async markNotificationRead(notificationId, version) {
-      const envelope = parseRecord(
-        await json(`/v1/notifications/${encodeURIComponent(notificationId)}/read`, {
-          method: "POST",
-          body: JSON.stringify({ version: integer(version, "notification read.version", 1) }),
-        }),
-        "notification read response"
-      );
-      return parseBoardNotification(envelope.notification, "notification read response.notification");
-    },
-    async getWorkItemAudit(workItemId, signal) {
-      return parseWorkItemAudit(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/audit`, { signal }),
-        "work item audit response"
-      );
-    },
-    async getWorkItem(workItemId, signal) {
-      return workItemFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, { signal }),
-        "work item detail response"
-      );
-    },
-    async getWorkItemChildren(parentWorkItemId, signal) {
-      return childrenFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(parentWorkItemId)}/children`, { signal }),
-        "work item children response"
-      );
-    },
-    async getWorkItemDependencies(workItemId, signal) {
-      return dependenciesFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/dependencies`, { signal }),
-        "work item dependencies response"
-      );
-    },
-    async getPipelineSummary(workItemId, signal) {
-      return parsePipelineSummary(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/pipeline-summary`, { signal }),
-        "pipeline summary response"
-      );
-    },
-    async approvePipelineMerge(workItemId, input) {
-      return workItemFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/approve-merge`, {
-          method: "POST",
-          body: JSON.stringify({ version: integer(input.version, "pipeline merge approval.version", 1) }),
-        }),
-        "approve pipeline merge response"
-      );
-    },
-    async rejectFinalApproval(workItemId, input) {
-      const note = boundedText(input.note.trim(), "final approval rejection note", 2_000);
-      return workItemFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/reject-final`, {
-          method: "POST",
-          body: JSON.stringify({
-            version: integer(input.version, "final approval rejection.version", 1),
-            note,
-          }),
-        }),
-        "reject final approval response"
-      );
-    },
-    async attestDeployment(workItemId, input) {
-      const note = input.note?.trim() ?? "";
-      return parseDeployAttestationResult(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/attest-deploy`, {
-          method: "POST",
-          body: JSON.stringify(
-            note.length === 0
-              ? {}
-              : {
-                  note: boundedText(note, "deployment attestation note", 2_000),
-                }
-          ),
-        }),
-        "deploy attestation response"
-      );
-    },
-    async resumeWorkItem(workItemId) {
-      return workItemFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}/resume`, { method: "POST" }),
-        "resume work item response"
-      );
-    },
-    async getProjectWorkflow(projectId, signal) {
-      return workflowFromEnvelope(
-        await json(`/v1/projects/${encodeURIComponent(projectId)}/workflow`, { signal }),
-        "workflow response"
-      );
-    },
-    async getProjectArtifacts(projectId, signal) {
-      const envelope = parseRecord(
-        await json(`/v1/projects/${encodeURIComponent(projectId)}/artifacts`, { signal }),
-        "artifacts response"
-      );
-      return parseArray(envelope.artifacts, "artifacts response.artifacts", parseProjectArtifact);
-    },
-    async confirmWorkflow(planRevisionId) {
-      return workflowFromEnvelope(
-        await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/confirm`, {
-          method: "POST",
-          body: JSON.stringify({ expectedState: "proposed" }),
-        }),
-        "confirm workflow response"
-      );
-    },
-    async rejectWorkflowPlan(planRevisionId, note) {
-      const parsedNote = boundedText(note, "plan rejection note", 2_000);
-      return planRejectionFromEnvelope(
-        await json(`/v1/plans/${encodeURIComponent(planRevisionId)}/reject`, {
-          method: "POST",
-          body: JSON.stringify({ note: parsedNote, expectedState: "proposed" }),
-        }),
-        "reject workflow plan response"
-      );
-    },
-    async subscribeProjectEvents(input) {
-      const response = await request(
-        `/v1/projects/${encodeURIComponent(input.projectId)}/workflow/events?after=${input.after}`,
-        { signal: input.signal, headers: { accept: "text/event-stream" } }
-      );
-      if (!response.body) throw new Error("The workflow event stream returned no body");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      const parser = new SseFrameParser({
-        maximumFrameLength: 64 * 1_024,
-        onEvent: (event) => {
-          if (!event.data) return;
-          const envelope = parseRecord(JSON.parse(event.data) as unknown, "workflow event");
-          input.onEvent(parseWorkflowEvent(envelope.event, "workflow event.event"));
-        },
-        sizeLimitError: () => new Error("A workflow event exceeded the size limit"),
-      });
-      try {
-        while (true) {
-          const chunk = await reader.read();
-          parser.push(decoder.decode(chunk.value, { stream: !chunk.done }));
-          if (chunk.done) {
-            parser.finish();
-            return;
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    },
-    async getArtifactBlob(artifactId, signal) {
-      return request(`/v1/artifacts/${encodeURIComponent(artifactId)}`, { signal }).then((response) => response.blob());
-    },
-    async getSnapshot(signal, requestMarker) {
-      const markerHeaders = requestMarker === undefined ? undefined : { "x-nexus-refresh-kind": requestMarker };
-      const [projectsValue, workItemsValue] = await Promise.all([
-        json("/v1/projects", { signal, headers: markerHeaders }),
-        json("/v1/work-items", { signal, headers: markerHeaders }),
-      ]);
-      const projectsEnvelope = parseRecord(projectsValue, "projects response");
-      const projects = parseArray(projectsEnvelope.projects, "projects response.projects", parseProject);
-      const workItems = await paginatedWorkItems(workItemsValue, signal);
-      const boards = await mapWithConcurrency(projects, 6, async (project) => {
-        return parseRawBoard(await json(`/v1/projects/${encodeURIComponent(project.projectId)}/board`, { signal }));
-      });
-      const tasks = boards.flatMap((board) => board.tasks);
-      const messageGroups = await mapWithConcurrency(tasks, 6, (task) => taskMessages(task, signal));
-      const rawMessages = messageGroups.flat();
-      agentRoles.clear();
-      questionVersions.clear();
-      taskAgents.clear();
-      taskPolicies.clear();
-      runAgents.clear();
-      for (const board of boards) {
-        for (const agent of board.agents) agentRoles.set(agent.agentId, agent.role);
-        for (const question of board.questions) questionVersions.set(question.questionId, question.version);
-        for (const task of board.tasks) {
-          taskPolicies.set(task.taskId, { kind: task.kind, requiredRole: task.requiredRole });
-          if (task.assignedAgentId) taskAgents.set(task.taskId, task.assignedAgentId);
-        }
-        for (const run of board.runs) runAgents.set(run.runId, run.agentId);
-      }
-      return normalize(boards, projects, rawMessages, workItems);
-    },
-    async getAutomationConfiguration(signal) {
-      return automationConfigurationFromEnvelope(
-        await json("/v1/automation-configuration", { signal }),
-        "automation configuration response"
-      );
-    },
-    async saveAutomationConfiguration(input) {
-      return automationConfigurationFromEnvelope(
-        await json("/v1/automation-configuration", {
-          method: "PATCH",
-          body: JSON.stringify(automationConfigurationUpdateBody(input)),
-        }),
-        "save automation configuration response"
-      );
-    },
-    async createProject(input) {
-      return projectFromEnvelope(
-        await json("/v1/projects", {
-          method: "POST",
-          body: JSON.stringify(input),
-        }),
-        "create project response"
-      );
-    },
-    async updateProject(projectId, input) {
-      return projectFromEnvelope(
-        await json(`/v1/projects/${encodeURIComponent(projectId)}`, {
-          method: "PATCH",
-          body: JSON.stringify(input),
-        }),
-        "update project response"
-      );
-    },
-    async addRepository(projectId, input) {
-      return repositoryFromEnvelope(
-        await json(`/v1/projects/${encodeURIComponent(projectId)}/repositories`, {
-          method: "POST",
-          body: JSON.stringify(input),
-        }),
-        "add repository response"
-      );
-    },
-    async updateRepository(repositoryId, input) {
-      return repositoryFromEnvelope(
-        await json(`/v1/repositories/${encodeURIComponent(repositoryId)}`, {
-          method: "PATCH",
-          body: JSON.stringify(input),
-        }),
-        "update repository response"
-      );
-    },
-    async getHostProjectRoots(signal) {
-      const envelope = parseRecord(await json("/v1/host/project-roots", { signal }), "host roots response");
-      return parseArray(envelope.roots, "host roots response.roots", parseHostProjectRoot);
-    },
-    async getHostDirectories(path, signal) {
-      const query = path === undefined ? "" : `?path=${encodeURIComponent(path)}`;
-      const envelope = parseRecord(await json(`/v1/host/directories${query}`, { signal }), "host directories response");
-      return parseHostDirectoryListing(envelope.listing, "host directories response.listing");
-    },
-    async createWorkItem(input) {
-      const originalRequest = input.originalRequest.trim();
-      if (originalRequest.length === 0) throw new Error("Enter a request");
-      if (originalRequest.length > 16_000) throw new Error("Requests cannot exceed 16,000 characters");
-      const idempotencyKey = input.idempotencyKey.trim();
-      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u.test(idempotencyKey)) {
-        throw new Error("Request submission has an invalid idempotency key");
-      }
-      const projectId = input.projectId.trim();
-      if (projectId.length === 0) throw new Error("Choose a project");
-      return workItemFromEnvelope(
-        await json("/v1/work-items", {
-          method: "POST",
-          body: JSON.stringify({
-            originalRequest,
-            priority: input.priority,
-            taskType: input.taskType,
-            projectTarget: { mode: "explicit", projectId },
-          }),
-          headers: { "idempotency-key": idempotencyKey },
-        }),
-        "create work item response"
-      );
-    },
-    async cancelWorkItem(workItemId, input) {
-      const reason = input.reason.trim();
-      if (reason.length === 0) throw new Error("An abandonment reason is required");
-      if (reason.length > 16_000) throw new Error("Abandonment reasons cannot exceed 16,000 characters");
-      return workItemFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            version: integer(input.version, "work item cancellation.version", 1),
-            action: "cancel",
-            reason,
-          }),
-        }),
-        "cancel work item response"
-      );
-    },
-    async archiveWorkItem(workItemId, input) {
-      return workItemFromEnvelope(
-        await json(`/v1/work-items/${encodeURIComponent(workItemId)}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            version: integer(input.version, "work item archive.version", 1),
-            action: "archive",
-          }),
-        }),
-        "archive work item response"
-      );
-    },
-    async rotateAgentToken(agentId, input) {
-      return tokenRotationFromEnvelope(
-        await json(`/v1/agents/${encodeURIComponent(agentId)}/rotate-token`, {
-          method: "POST",
-          body: JSON.stringify({ version: integer(input.version, "agent token rotation.version", 1) }),
-        }),
-        "agent token rotation response"
-      );
-    },
-    async createTask(input) {
-      const { projectId, ...task } = input;
-      await post(`/v1/projects/${encodeURIComponent(projectId)}/tasks`, {
-        ...task,
-        assignedAgentId: null,
-        assignedRole: null,
-      });
-    },
-    async createAgentQuery(input) {
-      const prompt = input.prompt.trim();
-      if (prompt.length === 0) throw new Error("Enter a question or request for this agent");
-      if (prompt.length > maximumAgentQueryObjectiveCharacters)
-        throw new Error("Agent questions and requests cannot exceed 8,000 characters");
-      const recentConversation = recentAgentQueryConversation(input.recentConversation ?? [], prompt);
-      const routingContext = input.routingContext?.trim();
-      const objectiveWithConversation = appendAgentQuerySection(
-        prompt,
-        agentQueryConversationContextMarker,
-        recentConversation
-      );
-      const objective = appendAgentQuerySection(
-        objectiveWithConversation,
-        agentQueryRoutingContextMarker,
-        routingContext ?? ""
-      );
-      const workspaceRefs = [...new Set(input.workspaceRefs)].slice(0, 32);
-      const titlePrefix = `Request for ${input.agentId}: `;
-      const titleSummary = prompt.replace(/\s+/gu, " ");
-      await post(`/v1/projects/${encodeURIComponent(input.projectId)}/tasks`, {
-        parentTaskId: null,
-        title: `${titlePrefix}${titleSummary}`.slice(0, 240).trimEnd(),
-        objective,
-        acceptanceCriteria:
-          "Return a concise answer or result. If more work is needed, propose child tasks for human approval; do not assign agents or deploy.",
-        workspaceRefs,
-        assignedAgentId: input.agentId,
-        assignedRole: input.assignedRole,
-        requiresReview: false,
-      });
-    },
-    async assignTask(taskId, input) {
-      const role = agentRoles.get(input.agentId);
-      if (!role) throw new Error("Refresh the board before assigning this agent");
-      const policy = taskPolicies.get(taskId);
-      if (!policy) throw new Error("Refresh the board before assigning this task");
-      if (policy.kind === "human_check") throw new Error("Human checks cannot be assigned to agents");
-      if (policy.requiredRole !== null && role !== policy.requiredRole) {
-        throw new Error(`This task requires a ${policy.requiredRole} agent`);
-      }
-      await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          version: input.version,
-          assignedAgentId: input.agentId,
-          assignedRole: role,
-          status: "queued",
-        }),
-      });
-    },
-    async retryTask(taskId, version) {
-      await post(`/v1/tasks/${encodeURIComponent(taskId)}/retry`, {
-        version: taskCommandVersion(version, "task retry.version"),
-      });
-    },
-    async backlogTask(taskId, version) {
-      await post(`/v1/tasks/${encodeURIComponent(taskId)}/backlog`, {
-        version: taskCommandVersion(version, "task backlog.version"),
-      });
-    },
-    async reorderTask(taskId, input) {
-      if (!Number.isSafeInteger(input.orderKey) || input.orderKey < 0) {
-        throw new Error("Task order must be a non-negative safe integer");
-      }
-      await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ version: input.version, orderKey: input.orderKey }),
-      });
-    },
-    async returnTaskToBacklog(taskId, input) {
-      await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          version: input.version,
-          assignedAgentId: null,
-          assignedRole: null,
-          status: "backlog",
-        }),
-      });
-    },
-    async addMessage(taskId, input) {
-      void input.version;
-      await post(`/v1/tasks/${encodeURIComponent(taskId)}/messages`, {
-        clientEventId: clientEventId(),
-        kind: "note",
-        body: input.body,
-      });
-    },
-    async answerQuestion(questionId, input) {
-      const version = questionVersions.get(questionId);
-      if (!version) throw new Error("Refresh the board before answering this question");
-      await post(`/v1/questions/${encodeURIComponent(questionId)}/answer`, { answer: input.answer, version });
-    },
-    async resumeTask(taskId, input) {
-      if (taskPolicies.get(taskId)?.kind === "human_check") throw new Error("Human checks cannot wake an agent");
-      const agentId = taskAgents.get(taskId);
-      if (!agentId) throw new Error("This task has no assigned agent to resume");
-      await post(
-        `/v1/agents/${encodeURIComponent(agentId)}/resume`,
-        { reason: "Human explicitly resumed this task", taskId },
-        `resume:${taskId}:${input.version}`
-      );
-    },
-    async decideHumanCheck(taskId, input) {
-      if (taskPolicies.get(taskId)?.kind !== "human_check")
-        throw new Error("Only human checks accept a human release decision");
-      const result = input.result.trim();
-      if (result.length === 0) throw new Error("A human decision rationale is required");
-      await request(`/v1/tasks/${encodeURIComponent(taskId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ version: input.version, status: input.status, result }),
-      });
-    },
-    async interruptRun(runId) {
-      const agentId = runAgents.get(runId);
-      if (!agentId) throw new Error("Refresh the board before interrupting this run");
-      return interruptRunFromEnvelope(
-        await json(`/v1/agents/${encodeURIComponent(agentId)}/interrupt`, {
-          method: "POST",
-          body: JSON.stringify({ reason: "Human interrupted this agent from the task board" }),
-          headers: { "idempotency-key": `interrupt:${runId}` },
-        }),
-        "interrupt response"
-      );
-    },
+    getBoardPause: boardMethods.getBoardPause,
+    setBoardPause: boardMethods.setBoardPause,
+    resumeBoard: boardMethods.resumeBoard,
+    getFindingsLedger: boardMethods.getFindingsLedger,
+    getParksLedger: boardMethods.getParksLedger,
+    getNotifications: boardMethods.getNotifications,
+    markNotificationRead: boardMethods.markNotificationRead,
+    getWorkItemAudit: workItemMethods.getWorkItemAudit,
+    getWorkItem: workItemMethods.getWorkItem,
+    getWorkItemChildren: workItemMethods.getWorkItemChildren,
+    getWorkItemDependencies: workItemMethods.getWorkItemDependencies,
+    getPipelineSummary: workItemMethods.getPipelineSummary,
+    approvePipelineMerge: workItemMethods.approvePipelineMerge,
+    rejectFinalApproval: workItemMethods.rejectFinalApproval,
+    attestDeployment: workItemMethods.attestDeployment,
+    resumeWorkItem: workItemMethods.resumeWorkItem,
+    getProjectWorkflow: projectMethods.getProjectWorkflow,
+    getProjectArtifacts: projectMethods.getProjectArtifacts,
+    confirmWorkflow: projectMethods.confirmWorkflow,
+    rejectWorkflowPlan: projectMethods.rejectWorkflowPlan,
+    subscribeProjectEvents: projectMethods.subscribeProjectEvents,
+    getArtifactBlob: projectMethods.getArtifactBlob,
+    getSnapshot: boardMethods.getSnapshot,
+    getAutomationConfiguration: automationMethods.getAutomationConfiguration,
+    saveAutomationConfiguration: automationMethods.saveAutomationConfiguration,
+    createProject: projectMethods.createProject,
+    updateProject: projectMethods.updateProject,
+    addRepository: projectMethods.addRepository,
+    updateRepository: projectMethods.updateRepository,
+    getHostProjectRoots: projectMethods.getHostProjectRoots,
+    getHostDirectories: projectMethods.getHostDirectories,
+    createWorkItem: workItemMethods.createWorkItem,
+    cancelWorkItem: workItemMethods.cancelWorkItem,
+    archiveWorkItem: workItemMethods.archiveWorkItem,
+    rotateAgentToken: agentMethods.rotateAgentToken,
+    createTask: taskMethods.createTask,
+    createAgentQuery: taskMethods.createAgentQuery,
+    assignTask: taskMethods.assignTask,
+    retryTask: taskMethods.retryTask,
+    backlogTask: taskMethods.backlogTask,
+    reorderTask: taskMethods.reorderTask,
+    returnTaskToBacklog: taskMethods.returnTaskToBacklog,
+    addMessage: taskMethods.addMessage,
+    answerQuestion: taskMethods.answerQuestion,
+    resumeTask: taskMethods.resumeTask,
+    decideHumanCheck: taskMethods.decideHumanCheck,
+    interruptRun: agentMethods.interruptRun,
   };
 }
