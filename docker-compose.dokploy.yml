@@ -6,6 +6,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Required: the Dockerfile's last stage is `agent`, so omitting this builds a
+      # container that exits immediately instead of the board.
+      target: runtime
     restart: unless-stopped
     stop_grace_period: 20s
     environment:
