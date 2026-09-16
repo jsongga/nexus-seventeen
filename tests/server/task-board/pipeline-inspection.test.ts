@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { BOARD_COMMITTER_EMAIL, BOARD_COMMITTER_NAME } from "#server/shared/git";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +9,18 @@ import { inspectPipelineBranch, type PipelineInspection } from "#server/task-boa
 import type { GitTextRunner } from "#server/shared/git";
 
 const SHA = "a".repeat(40);
-const SAFE_PREFIX = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=", "-C", "/repo"] as const;
+const SAFE_PREFIX = [
+  "-c",
+  "core.fsmonitor=",
+  "-c",
+  "core.hooksPath=",
+  "-c",
+  `user.name=${BOARD_COMMITTER_NAME}`,
+  "-c",
+  `user.email=${BOARD_COMMITTER_EMAIL}`,
+  "-C",
+  "/repo",
+] as const;
 
 function runGit(cwd: string, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {

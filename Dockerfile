@@ -15,7 +15,10 @@ FROM caddy:2-alpine AS caddy
 
 FROM node:24-alpine AS runtime
 
-RUN apk add --no-cache su-exec tini
+# git is not optional for the board: it inspects pipeline branches and creates merge
+# commits itself (see collaborators/pipeline-merge.ts), so a runtime without it fails
+# every merge with an opaque "pipeline repository is unavailable".
+RUN apk add --no-cache su-exec tini git
 
 WORKDIR /app
 

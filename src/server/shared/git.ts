@@ -119,10 +119,26 @@ export const defaultGitRunner: GitRunner = createGitRunner();
 
 /* —— Repository-scoped invocation —— */
 
-// Two settings are disabled on every invocation rather than per call site: the
-// filesystem monitor (a daemon the server must not start or depend on) and
-// hooks (a repository must never run its own code inside this process's tree).
-export const GIT_POLICY_FLAGS: readonly string[] = Object.freeze(["-c", "core.fsmonitor=", "-c", "core.hooksPath="]);
+export const BOARD_COMMITTER_NAME = process.env.STEWARD_GIT_COMMITTER_NAME ?? "Nexus Seventeen";
+export const BOARD_COMMITTER_EMAIL = process.env.STEWARD_GIT_COMMITTER_EMAIL ?? "board@nexus-seventeen.invalid";
+
+// Four settings are applied on every invocation rather than per call site. Two are
+// disabled: the filesystem monitor (a daemon the server must not start or depend on)
+// and hooks (a repository must never run its own code inside this process's tree).
+// Two are supplied: a committer identity, because the board creates merge commits
+// itself and a container has no ambient git identity — without these, every merge
+// fails with git's "Please tell me who you are", surfaced as an opaque
+// "pipeline repository is unavailable".
+export const GIT_POLICY_FLAGS: readonly string[] = Object.freeze([
+  "-c",
+  "core.fsmonitor=",
+  "-c",
+  "core.hooksPath=",
+  "-c",
+  `user.name=${BOARD_COMMITTER_NAME}`,
+  "-c",
+  `user.email=${BOARD_COMMITTER_EMAIL}`,
+]);
 
 export function gitArguments(repoPath: string, arguments_: readonly string[]): readonly string[] {
   return [...GIT_POLICY_FLAGS, "-C", repoPath, ...arguments_];

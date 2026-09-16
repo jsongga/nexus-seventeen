@@ -452,7 +452,11 @@ process.stdin.on("end", () => {
   fs.writeFileSync(statePath, String(revision));
   fs.writeFileSync(path.join(process.env.TMPDIR, "prompt-" + revision + ".txt"), input);
   const runGit = (args) => {
-    const result = child.spawnSync("git", args, { cwd: process.cwd(), encoding: "utf8" });
+    // Identity on every call, not just commits: a rebase that replays commits authors them too,
+    // and CI runners have no global git identity. Without this the base-advance retry fails there
+    // while passing on a developer machine that happens to have one configured.
+    const identity = ["-c", "user.name=Pipeline Test", "-c", "user.email=pipeline@test.invalid"];
+    const result = child.spawnSync("git", [...identity, ...args], { cwd: process.cwd(), encoding: "utf8" });
     if (result.status !== 0) throw new Error(result.stderr || "git failed");
   };
   const commit = (file, content, subject) => {

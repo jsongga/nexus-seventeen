@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { BOARD_COMMITTER_EMAIL, BOARD_COMMITTER_NAME } from "#server/shared/git";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -51,6 +52,10 @@ test("the prelude disables the filesystem monitor and hooks and scopes to the re
     "core.fsmonitor=",
     "-c",
     "core.hooksPath=",
+    "-c",
+    `user.name=${BOARD_COMMITTER_NAME}`,
+    "-c",
+    `user.email=${BOARD_COMMITTER_EMAIL}`,
     "-C",
     "/repo",
     "status",

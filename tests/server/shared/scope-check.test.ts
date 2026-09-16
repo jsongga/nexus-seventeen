@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { BOARD_COMMITTER_EMAIL, BOARD_COMMITTER_NAME } from "#server/shared/git";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -114,6 +115,10 @@ test("declared-scope matching is exact at prefix boundaries", async (t) => {
           "core.fsmonitor=",
           "-c",
           "core.hooksPath=",
+          "-c",
+          `user.name=${BOARD_COMMITTER_NAME}`,
+          "-c",
+          `user.email=${BOARD_COMMITTER_EMAIL}`,
           "-C",
           "/registered/repository",
           "diff",

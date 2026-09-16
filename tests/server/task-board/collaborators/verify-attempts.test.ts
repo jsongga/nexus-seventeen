@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { BOARD_COMMITTER_EMAIL, BOARD_COMMITTER_NAME } from "#server/shared/git";
 import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -385,6 +386,10 @@ test("starting attempts start outside the transaction, then green runs execute a
         "core.fsmonitor=",
         "-c",
         "core.hooksPath=",
+        "-c",
+        `user.name=${BOARD_COMMITTER_NAME}`,
+        "-c",
+        `user.email=${BOARD_COMMITTER_EMAIL}`,
         "-C",
         String(fixture.row().workspace_path),
         "rev-parse",
