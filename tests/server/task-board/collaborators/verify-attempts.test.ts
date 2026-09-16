@@ -390,6 +390,8 @@ test("starting attempts start outside the transaction, then green runs execute a
         `user.name=${BOARD_COMMITTER_NAME}`,
         "-c",
         `user.email=${BOARD_COMMITTER_EMAIL}`,
+        "-c",
+        "safe.directory=*",
         "-C",
         String(fixture.row().workspace_path),
         "rev-parse",

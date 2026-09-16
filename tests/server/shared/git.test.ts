@@ -56,6 +56,8 @@ test("the prelude disables the filesystem monitor and hooks and scopes to the re
     `user.name=${BOARD_COMMITTER_NAME}`,
     "-c",
     `user.email=${BOARD_COMMITTER_EMAIL}`,
+    "-c",
+    "safe.directory=*",
     "-C",
     "/repo",
     "status",

@@ -119,8 +119,16 @@ export const defaultGitRunner: GitRunner = createGitRunner();
 
 /* —— Repository-scoped invocation —— */
 
-export const BOARD_COMMITTER_NAME = process.env.STEWARD_GIT_COMMITTER_NAME ?? "Nexus Seventeen";
-export const BOARD_COMMITTER_EMAIL = process.env.STEWARD_GIT_COMMITTER_EMAIL ?? "board@nexus-seventeen.invalid";
+// `??` would accept an empty string and reproduce the outage this identity exists to prevent:
+// git treats an empty user.name as unset, and an empty user.email writes `<>` commits.
+const configured = (value: string | undefined, fallback: string): string =>
+  value === undefined || value.trim() === "" ? fallback : value;
+
+export const BOARD_COMMITTER_NAME = configured(process.env.STEWARD_GIT_COMMITTER_NAME, "Nexus Seventeen");
+export const BOARD_COMMITTER_EMAIL = configured(
+  process.env.STEWARD_GIT_COMMITTER_EMAIL,
+  "board@nexus-seventeen.invalid"
+);
 
 // Four settings are applied on every invocation rather than per call site. Two are
 // disabled: the filesystem monitor (a daemon the server must not start or depend on)
@@ -138,6 +146,13 @@ export const GIT_POLICY_FLAGS: readonly string[] = Object.freeze([
   `user.name=${BOARD_COMMITTER_NAME}`,
   "-c",
   `user.email=${BOARD_COMMITTER_EMAIL}`,
+  // The board runs as `node` and operates on repositories an operator cloned or bind-mounted in,
+  // which are typically root-owned (the entrypoint chowns /var/lib/steward and /private, not
+  // /repos). Without this git refuses them for "dubious ownership" and the failure surfaces as the
+  // same opaque "pipeline repository is unavailable". Safe here because the prelude already
+  // disables hooks, which is what the ownership check exists to protect against.
+  "-c",
+  "safe.directory=*",
 ]);
 
 export function gitArguments(repoPath: string, arguments_: readonly string[]): readonly string[] {

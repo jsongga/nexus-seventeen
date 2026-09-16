@@ -119,6 +119,8 @@ test("declared-scope matching is exact at prefix boundaries", async (t) => {
           `user.name=${BOARD_COMMITTER_NAME}`,
           "-c",
           `user.email=${BOARD_COMMITTER_EMAIL}`,
+          "-c",
+          "safe.directory=*",
           "-C",
           "/registered/repository",
           "diff",

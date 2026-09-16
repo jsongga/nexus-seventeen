@@ -599,6 +599,8 @@ test("pipeline HEAD resolution uses the injected hooks-neutralized git invocatio
         `user.name=${BOARD_COMMITTER_NAME}`,
         "-c",
         `user.email=${BOARD_COMMITTER_EMAIL}`,
+        "-c",
+        "safe.directory=*",
         "-C",
         "/registered/pipeline-repository",
         "rev-parse",

@@ -18,6 +18,8 @@ const SAFE_PREFIX = [
   `user.name=${BOARD_COMMITTER_NAME}`,
   "-c",
   `user.email=${BOARD_COMMITTER_EMAIL}`,
+  "-c",
+  "safe.directory=*",
   "-C",
   "/repo",
 ] as const;

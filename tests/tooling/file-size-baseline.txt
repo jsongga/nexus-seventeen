@@ -49,7 +49,7 @@ src/server/docs-publish/publish.ts	129
 src/server/docs-publish/retry.ts	54
 src/server/docs-publish/sink.ts	16
 src/server/shared/claim-context.ts	240
-src/server/shared/git.ts	198
+src/server/shared/git.ts	213
 src/server/shared/redact.ts	155
 src/server/shared/scope-check.ts	53
 src/server/shared/sections.ts	78
