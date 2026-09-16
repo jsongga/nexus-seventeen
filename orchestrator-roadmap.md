@@ -363,6 +363,17 @@ helpers were: a mistake produces two contexts where there was one and breaks
 caching invisibly rather than failing to compile. Same reason campaign 14 exists,
 different technique — a context object, not custom hooks.
 
+## Known dev-dependency advisories
+
+Not shipped in the image, and deliberately not gating a deploy — the CI audit is
+scoped to production dependencies, which report zero. Tracked here so they are
+followed up rather than forgotten:
+
+- `browserslist` (high) — unbounded memory growth; reached through Vite's build.
+- `baseline-browser-mapping` (moderate) — DoS on invalid input.
+- `@vitest/mocker` / `vitest` (moderate) — path traversal; the fix moves vitest
+  outside its stated range, so it needs its own change rather than `audit fix --force`.
+
 ## Migration risks
 
 - **Upgrade order, v26 → v28 (campaigns 16 and 18)**: these are **additive**, so
