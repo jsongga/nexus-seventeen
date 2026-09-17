@@ -28,7 +28,7 @@ import {
   type WorkNode,
   type WorkItemPhase,
   type WorkItemState,
-  type WorkflowStage,
+  type NodeStage,
 } from "#shared/task-board-contract";
 import {
   ContractValidationError,
@@ -1516,8 +1516,8 @@ export class RunsCollaborator {
         if (!existingPlan) {
           const configured = this.automation.getConfiguration();
           const requiredStages = new Set(request.workflowPlan.nodes.flatMap((node) => node.stageTemplate));
-          for (const stage of requiredStages) {
-            const executor = configured.stages.find((configuredStage) => configuredStage.stage === stage)?.executor;
+          for (const nodeStage of requiredStages) {
+            const executor = configured.stages.find((configuredStage) => configuredStage.stage === nodeStage)?.executor;
             if (executor?.kind === "machine_verify") continue;
             const agentType =
               executor?.kind === "agent_type"
@@ -1529,14 +1529,14 @@ export class RunsCollaborator {
               throw new TaskBoardError(
                 409,
                 "WORKFLOW_EXECUTOR_UNAVAILABLE",
-                `No enabled executor is configured for ${stage}`
+                `No enabled executor is configured for ${nodeStage}`
               );
             }
           }
           const executorTypeIds = new Set(
-            configured.stages.flatMap((stage) =>
-              requiredStages.has(stage.stage as WorkflowStage) && stage.executor.kind === "agent_type"
-                ? [stage.executor.agentTypeId]
+            configured.stages.flatMap((configuredStage) =>
+              requiredStages.has(configuredStage.stage as NodeStage) && configuredStage.executor.kind === "agent_type"
+                ? [configuredStage.executor.agentTypeId]
                 : []
             )
           );

@@ -840,10 +840,10 @@ export class WorkItemsCollaborator {
     const enabledTypes = new Set(
       configuration.agentTypes.filter((agentType) => agentType.enabled).map((agentType) => agentType.agentTypeId)
     );
-    const availableStages = configuration.stages.flatMap((stage) =>
-      stage.executor.kind === "machine_verify" ||
-      (stage.executor.kind === "agent_type" && enabledTypes.has(stage.executor.agentTypeId))
-        ? [stage.stage]
+    const availableStages = configuration.stages.flatMap((configuredStage) =>
+      configuredStage.executor.kind === "machine_verify" ||
+      (configuredStage.executor.kind === "agent_type" && enabledTypes.has(configuredStage.executor.agentTypeId))
+        ? [configuredStage.stage]
         : []
     );
     const taskRequest = {

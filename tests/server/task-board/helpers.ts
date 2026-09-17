@@ -206,10 +206,11 @@ const AUTOMATION_STAGE_ORDER: readonly WorkItemStage[] = WORK_ITEM_STAGES;
 export function automationStages(
   overrides: Readonly<Partial<Record<WorkItemStage, AutomationStageExecutor>>> = {}
 ): readonly AutomationPipelineStage[] {
-  return AUTOMATION_STAGE_ORDER.map((stage) => ({
-    stage,
+  return AUTOMATION_STAGE_ORDER.map((configuredStage) => ({
+    stage: configuredStage,
     executor:
-      overrides[stage] ?? (stage === "human_review" ? { kind: "human" as const } : { kind: "disabled" as const }),
+      overrides[configuredStage] ??
+      (configuredStage === "human_review" ? { kind: "human" as const } : { kind: "disabled" as const }),
   }));
 }
 

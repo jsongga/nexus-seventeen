@@ -161,7 +161,7 @@ export function isHardTerminalTaskStatus(status: TaskStatus): status is Extract<
 }
 
 export const TASK_PHASE_STAGES = ["research", "planning", "execution", "testing", "review", "done"] as const;
-export type TaskPhaseStage = (typeof TASK_PHASE_STAGES)[number];
+export type PhaseStep = (typeof TASK_PHASE_STAGES)[number];
 
 export const TASK_PHASE_STATUSES = ["pending", "in_progress", "blocked", "completed", "failed"] as const;
 export type TaskPhaseStatus = (typeof TASK_PHASE_STATUSES)[number];
@@ -346,7 +346,7 @@ export const AUTOMATION_STAGE_ALLOWED_ROLES: Readonly<Record<WorkItemStage, read
 } satisfies Record<WorkItemStage, readonly AgentRole[]>);
 
 export const WORKFLOW_STAGES = ["research", "planning", "implementation", "testing", "verification"] as const;
-export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
+export type NodeStage = (typeof WORKFLOW_STAGES)[number];
 
 export const PARK_CATEGORIES = [
   "open_question",
@@ -383,7 +383,7 @@ export type ParkCategory = (typeof PARK_CATEGORIES)[number];
 
 // The pipeline_plans CTE in src/server/task-board/collaborators/wall-clock.ts
 // mirrors this predicate in SQL when discovering capped pipeline runs.
-export function pipelineTemplateShape(template: readonly WorkflowStage[]): "v1" | "v2" | null {
+export function pipelineTemplateShape(template: readonly NodeStage[]): "v1" | "v2" | null {
   if (template.length === 2 && template[0] === "implementation" && template[1] === "testing") return "v1";
   if (
     template.length === 3 &&
@@ -727,7 +727,7 @@ export interface ReviewFindingDraft {
 export interface ReviewFinding extends ReviewFindingDraft {
   readonly findingId: string;
   readonly nodeId: string;
-  readonly stage: WorkflowStage;
+  readonly stage: NodeStage;
   readonly round: number;
   readonly blocking: boolean;
   readonly createdAt: string;
@@ -804,8 +804,8 @@ export interface WorkNode {
   readonly objective: string;
   readonly acceptanceCriteria: readonly string[];
   readonly dependencyNodeIds: readonly string[];
-  readonly stageTemplate: readonly WorkflowStage[];
-  readonly currentStage: WorkflowStage | null;
+  readonly stageTemplate: readonly NodeStage[];
+  readonly currentStage: NodeStage | null;
   readonly state: WorkNodeState;
   readonly version: number;
   readonly createdAt: string;
@@ -817,7 +817,7 @@ export interface WorkNode {
 export interface VerifyAttempt {
   readonly verifyAttemptId: string;
   readonly nodeId: string;
-  readonly stage: WorkflowStage;
+  readonly stage: NodeStage;
   readonly attempt: number;
   readonly verifyRunId: string | null;
   readonly workspacePath: string | null;
@@ -861,14 +861,14 @@ export interface StageHandoff {
   readonly handoffId: string;
   readonly nodeId: string;
   readonly taskId: string;
-  readonly stage: WorkflowStage;
+  readonly stage: NodeStage;
   readonly outcome: StageHandoffOutcome;
   readonly summary: string;
   readonly evidence: readonly string[];
   readonly artifactIds: readonly string[];
   readonly acceptanceCriteria: readonly CriterionResult[];
   readonly blockers: readonly string[];
-  readonly recommendedReturnStage: WorkflowStage | null;
+  readonly recommendedReturnStage: NodeStage | null;
   readonly createdAt: string;
 }
 
@@ -879,7 +879,7 @@ export interface StageHandoffDraft {
   readonly artifactIds: readonly string[];
   readonly acceptanceCriteria: readonly CriterionResult[];
   readonly blockers: readonly string[];
-  readonly recommendedReturnStage: WorkflowStage | null;
+  readonly recommendedReturnStage: NodeStage | null;
 }
 
 export interface ProjectArtifact {
@@ -922,7 +922,7 @@ export interface ProposedWorkNode {
   readonly objective: string;
   readonly acceptanceCriteria: readonly string[];
   readonly dependencyNodeIds: readonly string[];
-  readonly stageTemplate: readonly WorkflowStage[];
+  readonly stageTemplate: readonly NodeStage[];
 }
 
 export interface WorkflowPlanDraft extends PlanRecordFields {
@@ -1064,7 +1064,7 @@ export interface TaskPhase {
   readonly projectId: string;
   readonly taskId: string;
   readonly title: string;
-  readonly stage: TaskPhaseStage;
+  readonly stage: PhaseStep;
   readonly status: TaskPhaseStatus;
   /** Phases sharing a non-null value are intended to run concurrently. */
   readonly parallelGroup: string | null;
@@ -1236,7 +1236,7 @@ export interface ClaimRunResult {
     workflow?: Readonly<{
       planRevisionId: string;
       nodeId: string;
-      stage: WorkflowStage;
+      stage: NodeStage;
       skills: readonly SkillSnapshot[];
       dependencyHandoffs: readonly StageHandoff[];
       /** Absent is accepted from pre-pipeline claim replays and normalizes to null at the worker boundary. */
@@ -1348,14 +1348,14 @@ export interface CreateTaskRequest {
 
 export interface CreateTaskPhaseRequest {
   readonly title: string;
-  readonly stage: TaskPhaseStage;
+  readonly stage: PhaseStep;
   readonly parallelGroup: string | null;
 }
 
 export interface UpdateTaskPhaseRequest {
   readonly version: number;
   readonly title?: string;
-  readonly stage?: TaskPhaseStage;
+  readonly stage?: PhaseStep;
   readonly status?: TaskPhaseStatus;
   readonly parallelGroup?: string | null;
   readonly orderKey?: number;

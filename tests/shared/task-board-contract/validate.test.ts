@@ -253,9 +253,9 @@ function pipelinePlan(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 function stages(): Array<Readonly<{ stage: string; executor: Readonly<{ kind: string }> }>> {
-  return WORK_ITEM_STAGES.map((stage) => ({
-    stage,
-    executor: { kind: stage === "human_review" ? "human" : "disabled" },
+  return WORK_ITEM_STAGES.map((configuredStage) => ({
+    stage: configuredStage,
+    executor: { kind: configuredStage === "human_review" ? "human" : "disabled" },
   }));
 }
 
@@ -720,8 +720,8 @@ test("board request shapes accept exactly the shared contract enum members", () 
       token: "task-board-agent-token-0123456789abcdef",
     })
   );
-  assertAcceptedSet(TASK_PHASE_STAGES, (stage) =>
-    parseBoardCreateTaskPhase({ title: "Inspect", stage, parallelGroup: null })
+  assertAcceptedSet(TASK_PHASE_STAGES, (phaseStep) =>
+    parseBoardCreateTaskPhase({ title: "Inspect", stage: phaseStep, parallelGroup: null })
   );
   assertAcceptedSet(TASK_PHASE_STATUSES, (status) => parseBoardUpdateTaskPhase({ version: 1, status }));
   assertAcceptedSet(TASK_STATUSES, (status) => parseBoardUpdateTask({ version: 1, status }));
@@ -772,7 +772,9 @@ test("board request shapes accept exactly the shared contract enum members", () 
     })
   );
   assert.deepEqual(
-    parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: stages() }).stages.map((stage) => stage.stage),
+    parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: stages() }).stages.map(
+      (configuredStage) => configuredStage.stage
+    ),
     [...WORK_ITEM_STAGES]
   );
   const machineVerifyStages = stages();
@@ -782,20 +784,20 @@ test("board request shapes accept exactly the shared contract enum members", () 
   };
   assert.deepEqual(
     parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: machineVerifyStages }).stages.find(
-      (stage) => stage.stage === "testing"
+      (configuredStage) => configuredStage.stage === "testing"
     )?.executor,
     { kind: "machine_verify" }
   );
 
-  for (const stage of WORK_ITEM_STAGES.filter((candidate) => candidate !== "testing")) {
+  for (const configuredStage of WORK_ITEM_STAGES.filter((candidate) => candidate !== "testing")) {
     const invalidMachineVerifyStages = stages();
-    invalidMachineVerifyStages[WORK_ITEM_STAGES.indexOf(stage)] = {
-      stage,
+    invalidMachineVerifyStages[WORK_ITEM_STAGES.indexOf(configuredStage)] = {
+      stage: configuredStage,
       executor: { kind: "machine_verify" },
     };
     assert.throws(
       () => parseBoardAutomationUpdate({ version: 1, agentTypes: [], stages: invalidMachineVerifyStages }),
-      new RegExp(`${stage} cannot use the machine_verify executor`, "u")
+      new RegExp(`${configuredStage} cannot use the machine_verify executor`, "u")
     );
   }
 });
@@ -803,13 +805,13 @@ test("board request shapes accept exactly the shared contract enum members", () 
 test("automation role authorization follows the shared stage table", () => {
   assert.equal(Object.isFrozen(AUTOMATION_STAGE_ALLOWED_ROLES), true);
 
-  for (const stage of WORK_ITEM_STAGES) {
-    const allowedRoles: readonly string[] = AUTOMATION_STAGE_ALLOWED_ROLES[stage];
+  for (const configuredStage of WORK_ITEM_STAGES) {
+    const allowedRoles: readonly string[] = AUTOMATION_STAGE_ALLOWED_ROLES[configuredStage];
     assert.equal(Object.isFrozen(allowedRoles), true);
     for (const role of AGENT_ROLES) {
       const configuredStages = stages();
-      configuredStages[WORK_ITEM_STAGES.indexOf(stage)] = {
-        stage,
+      configuredStages[WORK_ITEM_STAGES.indexOf(configuredStage)] = {
+        stage: configuredStage,
         executor: { kind: "agent_type", agentTypeId: "type-one" },
       } as never;
       const parse = () =>
@@ -831,7 +833,7 @@ test("automation role authorization follows the shared stage table", () => {
         });
 
       if (allowedRoles.includes(role)) {
-        assert.doesNotThrow(parse, `${stage} should allow ${role}`);
+        assert.doesNotThrow(parse, `${configuredStage} should allow ${role}`);
         continue;
       }
       // The human-owned and disabled stages reject an agent executor before the
@@ -839,12 +841,12 @@ test("automation role authorization follows the shared stage table", () => {
       // A bare string second argument here would be Node's assertion message,
       // not a matcher, and would pass on any throw at all.
       const expected =
-        stage === "human_review"
+        configuredStage === "human_review"
           ? /human_review must use the human executor/u
-          : stage === "deployment"
+          : configuredStage === "deployment"
             ? /deployment must remain disabled/u
-            : new RegExp(`${stage} cannot use an agent type with the ${role} role`, "u");
-      assert.throws(parse, expected, `${stage} should reject ${role}`);
+            : new RegExp(`${configuredStage} cannot use an agent type with the ${role} role`, "u");
+      assert.throws(parse, expected, `${configuredStage} should reject ${role}`);
     }
   }
 });
@@ -865,7 +867,7 @@ test("board workflow shapes accept exactly the shared handoff and stage enums", 
   assertAcceptedSet(WORKFLOW_STAGES, (value) =>
     parseBoardSettle({ outcome: "completed", result: "Done.", handoff: handoff("passed", value) })
   );
-  assertAcceptedSet(WORKFLOW_STAGES, (stage) =>
+  assertAcceptedSet(WORKFLOW_STAGES, (nodeStage) =>
     parseBoardSettle({
       outcome: "completed",
       result: "Done.",
@@ -880,7 +882,7 @@ test("board workflow shapes accept exactly the shared handoff and stage enums", 
             objective: "Complete and verify it.",
             acceptanceCriteria: ["The work is verified."],
             dependencyNodeIds: [],
-            stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
+            stageTemplate: nodeStage === "verification" ? [nodeStage] : [nodeStage, "verification"],
           },
         ],
       },
@@ -918,7 +920,7 @@ test("worker context shapes accept exactly the shared role, task, and phase enum
   assertAcceptedSet(TASK_KINDS, (kind) =>
     parseWorkerAgentContext(context({ task: { ...(context().task as object), kind } }))
   );
-  assertAcceptedSet(TASK_PHASE_STAGES, (stage) =>
+  assertAcceptedSet(TASK_PHASE_STAGES, (phaseStep) =>
     parseWorkerAgentContext(
       context({
         task: {
@@ -927,8 +929,8 @@ test("worker context shapes accept exactly the shared role, task, and phase enum
             {
               phaseId: "phase-one",
               title: "Inspect",
-              stage,
-              status: stage === "done" ? "completed" : "pending",
+              stage: phaseStep,
+              status: phaseStep === "done" ? "completed" : "pending",
               parallelGroup: null,
               orderKey: 0,
               version: 1,
@@ -1027,7 +1029,7 @@ test("worker outcome shapes accept exactly the shared handoff and workflow enums
       })
     )
   );
-  assertAcceptedSet(WORKFLOW_STAGES, (stage) =>
+  assertAcceptedSet(WORKFLOW_STAGES, (nodeStage) =>
     parseWorkerAgentRunOutcome(
       outcome(null, {
         objective: "Complete the work.",
@@ -1040,7 +1042,7 @@ test("worker outcome shapes accept exactly the shared handoff and workflow enums
             objective: "Complete and verify it.",
             acceptanceCriteria: ["The work is verified."],
             dependencyNodeIds: [],
-            stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
+            stageTemplate: nodeStage === "verification" ? [nodeStage] : [nodeStage, "verification"],
           },
         ],
       })

@@ -87,7 +87,7 @@ import {
   type WorkItemState,
   type WorkItemTransition,
   type WorkNode,
-  type WorkflowStage,
+  type NodeStage,
   isTerminalWorkItemState,
 } from "../index.js";
 import {
@@ -166,7 +166,7 @@ export type TolerantReviewFindingEntity = Omit<ReviewFinding, "category" | "seve
   Readonly<{
     category: ReviewFindingCategory | "unrecognized";
     severity: ReviewFindingSeverity | "unrecognized";
-    stage: WorkflowStage | "unrecognized";
+    stage: NodeStage | "unrecognized";
   }>;
 
 export interface TolerantFindingsLedger {
@@ -570,9 +570,9 @@ export function parseTaskPhaseEntity(value: unknown, label: string, options: Sha
     "updatedAt",
   ];
   const item = entity(value, label, fields, fields, options);
-  const stage = entityMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`, options);
+  const phaseStep = entityMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`, options);
   const status = entityMember(item.status, TASK_PHASE_STATUSES, `${label}.status`, options);
-  if (stage === "done" && status !== "completed") {
+  if (phaseStep === "done" && status !== "completed") {
     throw new ContractValidationError(`${label} may use the legacy done stage only when status is completed`);
   }
   return Object.freeze({
@@ -581,7 +581,7 @@ export function parseTaskPhaseEntity(value: unknown, label: string, options: Sha
     projectId: shapeIdentifier(item.projectId, `${label}.projectId`, options),
     taskId: shapeIdentifier(item.taskId, `${label}.taskId`, options),
     title: stringValue(item.title, `${label}.title`),
-    stage,
+    stage: phaseStep,
     status,
     parallelGroup: nullableIdentifier(item.parallelGroup, `${label}.parallelGroup`, options),
     orderKey: integer(item.orderKey, `${label}.orderKey`),
@@ -623,9 +623,9 @@ export function parseAgentTaskPhaseResponse(
   if (item.apiVersion !== TASK_BOARD_API_VERSION || item.projectId !== projectId || item.taskId !== taskId) {
     throw new ContractValidationError(`${label} binding is invalid`);
   }
-  const stage = contractMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`);
+  const phaseStep = contractMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`);
   const status = contractMember(item.status, TASK_PHASE_STATUSES, `${label}.status`);
-  if (stage === "done" && status !== "completed") {
+  if (phaseStep === "done" && status !== "completed") {
     throw new ContractValidationError(`${label} completion state is invalid`);
   }
   return Object.freeze({
@@ -634,7 +634,7 @@ export function parseAgentTaskPhaseResponse(
     projectId,
     taskId,
     title: stringValue(item.title, `${label}.title`),
-    stage,
+    stage: phaseStep,
     status,
     parallelGroup: item.parallelGroup === null ? null : identifier(item.parallelGroup, `${label}.parallelGroup`),
     orderKey: integer(item.orderKey, `${label}.orderKey`, 0, `${label}.orderKey is invalid`),
@@ -1311,13 +1311,13 @@ export function parseReviewFindingEntity(
     options
   );
   const tolerateUnknown = options.projection === "browser" && options.tolerantEnums === true;
-  const stage = tolerateUnknown
+  const nodeStage = tolerateUnknown
     ? entityMember(item.stage, WORKFLOW_STAGES, `${label}.stage`, options, undefined, true)
     : entityMember(item.stage, WORKFLOW_STAGES, `${label}.stage`, options);
   return Object.freeze({
     findingId: shapeIdentifier(item.findingId, `${label}.findingId`, options),
     nodeId: shapeIdentifier(item.nodeId, `${label}.nodeId`, options),
-    stage,
+    stage: nodeStage,
     round: integer(item.round, `${label}.round`, 1),
     ...reviewFindingDraftFields(item, label, options, tolerateUnknown),
     blocking: booleanValue(item.blocking, `${label}.blocking`),
@@ -2064,8 +2064,8 @@ export function parseNodeEntity(value: unknown, label: string, options: ShapePar
       )
     ),
     stageTemplate: Object.freeze(
-      arrayOf(item.stageTemplate, `${label}.stageTemplate`, (stage, stageLabel) =>
-        entityMember(stage, WORKFLOW_STAGES, stageLabel, options)
+      arrayOf(item.stageTemplate, `${label}.stageTemplate`, (nodeStage, stageLabel) =>
+        entityMember(nodeStage, WORKFLOW_STAGES, stageLabel, options)
       )
     ),
     currentStage:

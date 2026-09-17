@@ -9,7 +9,7 @@ import { defaultGitRunner, GIT_POLICY_FLAGS, type GitTextRunner } from "../../sh
 import type { VerifyRunnerOptions, VerifyRunStatus } from "#server/agents/verify";
 import { VerifyRunner } from "#server/agents/verify";
 import { TaskWorkspaceManager, removeRecordedTaskWorkspace } from "#server/agents/task-workspace";
-import type { PlanCriterionCheck, VerifyAttempt, WorkNode, WorkflowStage } from "#shared/task-board-contract";
+import type { PlanCriterionCheck, VerifyAttempt, WorkNode, NodeStage } from "#shared/task-board-contract";
 import { GIT_OBJECT_ID_PATTERN, VERIFY_WORKSPACE_SUFFIX } from "#shared/task-board-contract";
 import { redactForPersistence } from "../../shared/redact.js";
 import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
@@ -130,7 +130,7 @@ export interface VerifyAttemptsDependencies {
   readonly git?: GitTextRunner;
   readonly settleInTransaction: (
     nodeId: string,
-    stage: WorkflowStage,
+    nodeStage: NodeStage,
     passed: boolean,
     evidence: MachineVerifyEvidence
   ) => readonly WorkNode[];
@@ -141,7 +141,7 @@ export interface VerifyAttemptsDependencies {
 interface AttemptContext {
   readonly verifyAttemptId: string;
   readonly nodeId: string;
-  readonly stage: WorkflowStage;
+  readonly stage: NodeStage;
   readonly attempt: number;
   readonly verifyRunId: string | null;
   readonly workspacePath: string | null;
@@ -278,7 +278,7 @@ function attemptContext(row: Row): AttemptContext {
   return Object.freeze({
     verifyAttemptId: String(row.verify_attempt_id),
     nodeId: String(row.node_id),
-    stage: String(row.stage) as WorkflowStage,
+    stage: String(row.stage) as NodeStage,
     attempt: Number(row.attempt),
     verifyRunId: row.verify_run_id === null ? null : String(row.verify_run_id),
     workspacePath: row.workspace_path === null ? null : String(row.workspace_path),
@@ -296,7 +296,7 @@ function verifyAttempt(row: Row): VerifyAttempt {
   return Object.freeze({
     verifyAttemptId: String(row.verify_attempt_id),
     nodeId: String(row.node_id),
-    stage: String(row.stage) as WorkflowStage,
+    stage: String(row.stage) as NodeStage,
     attempt: Number(row.attempt),
     verifyRunId: row.verify_run_id === null ? null : String(row.verify_run_id),
     workspacePath: row.workspace_path === null ? null : String(row.workspace_path),
@@ -374,7 +374,7 @@ export class VerifyAttemptsCollaborator {
     );
   }
 
-  createStartingAttemptInTransaction(nodeId: string, stage: WorkflowStage): StartingVerifyAttemptResult {
+  createStartingAttemptInTransaction(nodeId: string, nodeStage: NodeStage): StartingVerifyAttemptResult {
     const row = this.runtime.store.db
       .prepare(
         `
@@ -386,7 +386,7 @@ export class VerifyAttemptsCollaborator {
     `
       )
       .get(nodeId) as Row | undefined;
-    if (row === undefined || row.current_stage !== stage || (row.state !== "ready" && row.state !== "blocked"))
+    if (row === undefined || row.current_stage !== nodeStage || (row.state !== "ready" && row.state !== "blocked"))
       return Object.freeze({ kind: "ineligible" });
     if (row.pipeline_branch === null) return Object.freeze({ kind: "pipeline_required" });
     const attempt = Number(
@@ -401,7 +401,7 @@ export class VerifyAttemptsCollaborator {
       ) prior
     `
         )
-        .get(nodeId, stage, nodeId, stage)?.next_attempt
+        .get(nodeId, nodeStage, nodeId, nodeStage)?.next_attempt
     );
     const verifyAttemptId = `verify_${randomUUID()}`;
     const now = exactNow(this.runtime.config.now);
@@ -414,7 +414,7 @@ export class VerifyAttemptsCollaborator {
       ) VALUES (?, ?, ?, ?, NULL, NULL, 'starting', NULL, NULL, ?, NULL)
     `
       )
-      .run(verifyAttemptId, nodeId, stage, attempt, now);
+      .run(verifyAttemptId, nodeId, nodeStage, attempt, now);
     const updated = this.runtime.store.db
       .prepare(
         `
@@ -423,7 +423,7 @@ export class VerifyAttemptsCollaborator {
       WHERE node_id=? AND current_stage=? AND state IN ('ready','blocked')
     `
       )
-      .run(now, nodeId, stage);
+      .run(now, nodeId, nodeStage);
     if (Number(updated.changes) !== 1) throw new Error("TASK_BOARD_MACHINE_VERIFY_ACTIVATION_CONFLICT");
     return Object.freeze({ kind: "created", verifyAttemptId });
   }

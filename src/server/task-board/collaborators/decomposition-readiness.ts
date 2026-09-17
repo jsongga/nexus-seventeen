@@ -3,7 +3,7 @@ import type {
   AgentRole,
   CrossRepoContext,
   PublishedInterfaceFailureReason,
-  WorkflowStage,
+  NodeStage,
   WorkItemPhase,
   WorkItemState,
 } from "#shared/task-board-contract";
@@ -50,10 +50,10 @@ export function isFailedTerminalWorkItemState(state: WorkItemState): boolean {
 
 /** Mirrors the claim-side role gate for published provider context. */
 export function migrateTaskCarriesCrossRepoContext(
-  stage: WorkflowStage | string,
+  nodeStage: NodeStage | string,
   assignedRole: AgentRole | string | null
 ): boolean {
-  return stage === "implementation" && assignedRole === "engineer";
+  return nodeStage === "implementation" && assignedRole === "engineer";
 }
 
 /** The parent row and every child row form one project-scoped family. */

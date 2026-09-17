@@ -430,7 +430,9 @@ test("pipeline executor drift rejects confirmation without transitioning the wor
     updateProjectPath(fixture, repository.repo);
     const { workItem, revision } = preparePipeline(fixture, "executor-drift");
     const configured = fixture.board.getAutomationConfiguration();
-    const implementation = configured.stages.find((stage) => stage.stage === "implementation")?.executor;
+    const implementation = configured.stages.find(
+      (configuredStage) => configuredStage.stage === "implementation"
+    )?.executor;
     assert.equal(implementation?.kind, "agent_type");
     fixture.board.updateAutomationConfiguration(
       automationConfigurationRequest({
@@ -464,7 +466,9 @@ test("pipeline verification executor drift rejects confirmation without transiti
     updateProjectPath(fixture, repository.repo);
     const { workItem, revision } = preparePipeline(fixture, "verification-executor-drift");
     const configured = fixture.board.getAutomationConfiguration();
-    const implementation = configured.stages.find((stage) => stage.stage === "implementation")?.executor;
+    const implementation = configured.stages.find(
+      (configuredStage) => configuredStage.stage === "implementation"
+    )?.executor;
     assert.equal(implementation?.kind, "agent_type");
     fixture.board.updateAutomationConfiguration(
       automationConfigurationRequest({
@@ -508,7 +512,9 @@ test("a stored v1 pipeline keeps its testing-only executor contract", async () =
       db.close();
     }
     const configured = fixture.board.getAutomationConfiguration();
-    const implementation = configured.stages.find((stage) => stage.stage === "implementation")?.executor;
+    const implementation = configured.stages.find(
+      (configuredStage) => configuredStage.stage === "implementation"
+    )?.executor;
     assert.equal(implementation?.kind, "agent_type");
     fixture.board.updateAutomationConfiguration(
       automationConfigurationRequest({

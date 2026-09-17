@@ -504,10 +504,10 @@ async function proposedActivationWorkflow(
 function stageWorkflowForReconciliation(
   db: DatabaseSyncType,
   workflow: Awaited<ReturnType<typeof proposedActivationWorkflow>>,
-  stage: "research" | "verification"
+  nodeStage: "research" | "verification"
 ): void {
   const confirmedAt = "2026-07-19T20:01:00.000Z";
-  const workItemState = stage === "verification" ? "reviewing" : "planning";
+  const workItemState = nodeStage === "verification" ? "reviewing" : "planning";
   assert.equal(
     Number(
       db
@@ -532,7 +532,7 @@ function stageWorkflowForReconciliation(
     WHERE node_id=? AND state='pending'
   `
         )
-        .run(stage, confirmedAt, workflow.node.nodeId).changes
+        .run(nodeStage, confirmedAt, workflow.node.nodeId).changes
     ),
     1
   );
@@ -546,7 +546,7 @@ function stageWorkflowForReconciliation(
     WHERE work_item_id=?
   `
         )
-        .run(workItemState, stage, confirmedAt, workflow.workItem.workItemId).changes
+        .run(workItemState, nodeStage, confirmedAt, workflow.workItem.workItemId).changes
     ),
     1
   );
@@ -556,11 +556,11 @@ function configureActivationStages(
   board: TaskBoard,
   stages: Readonly<Partial<Record<"research" | "verification", string>>>
 ): void {
-  const types = Object.entries(stages).map(([stage, agentTypeId]) => ({
+  const types = Object.entries(stages).map(([nodeStage, agentTypeId]) => ({
     agentTypeId,
-    name: `${stage} activation executor`,
-    description: `Executes reconciled ${stage} workflow stages.`,
-    role: stage === "verification" ? ("verifier" as const) : ("engineer" as const),
+    name: `${nodeStage} activation executor`,
+    description: `Executes reconciled ${nodeStage} workflow stages.`,
+    role: nodeStage === "verification" ? ("verifier" as const) : ("engineer" as const),
     supplementalInstructions: "Exercise crash-safe workflow activation.",
     skillIds: [],
     evaluatorProfile: "tests" as const,
@@ -571,7 +571,10 @@ function configureActivationStages(
       agentTypes: types,
       stages: automationStages(
         Object.fromEntries(
-          Object.entries(stages).map(([stage, agentTypeId]) => [stage, { kind: "agent_type" as const, agentTypeId }])
+          Object.entries(stages).map(([nodeStage, agentTypeId]) => [
+            nodeStage,
+            { kind: "agent_type" as const, agentTypeId },
+          ])
         )
       ),
     })
@@ -5993,10 +5996,11 @@ test("dormant automation configuration persists atomically without creating exec
         agentTypes: configured.agentTypes.map((agentType) =>
           agentType.agentTypeId === managerType.agentTypeId ? { ...agentType, role: "engineer" as const } : agentType
         ),
-        stages: configured.stages.map((stage) =>
-          stage.executor.kind === "agent_type" && stage.executor.agentTypeId === managerType.agentTypeId
-            ? { ...stage, executor: { kind: "disabled" as const } }
-            : stage
+        stages: configured.stages.map((configuredStage) =>
+          configuredStage.executor.kind === "agent_type" &&
+          configuredStage.executor.agentTypeId === managerType.agentTypeId
+            ? { ...configuredStage, executor: { kind: "disabled" as const } }
+            : configuredStage
         ),
       }),
     (error: unknown) => error instanceof TaskBoardError && error.code === "AUTOMATION_AGENT_TYPE_ROLE_IMMUTABLE"
@@ -6098,13 +6102,15 @@ test("automation configuration rejects unsafe stage references and registry iden
       { stage: "testing", agentType: managerType },
       { stage: "verification", agentType: engineerType },
     ] as const;
-    for (const { stage, agentType } of incompatibleAssignments) {
+    for (const { stage: configuredStage, agentType } of incompatibleAssignments) {
       assert.throws(
         () =>
           fixture.board.updateAutomationConfiguration(
             automationConfigurationRequest({
               agentTypes: [agentType],
-              stages: automationStages({ [stage]: { kind: "agent_type", agentTypeId: agentType.agentTypeId } }),
+              stages: automationStages({
+                [configuredStage]: { kind: "agent_type", agentTypeId: agentType.agentTypeId },
+              }),
             })
           ),
         (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
@@ -6192,15 +6198,19 @@ test("automation configuration rejects unsafe stage references and registry iden
         ),
       (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
-    const wrongReview = automationStages().map((stage) =>
-      stage.stage === "human_review" ? { ...stage, executor: { kind: "disabled" as const } } : stage
+    const wrongReview = automationStages().map((configuredStage) =>
+      configuredStage.stage === "human_review"
+        ? { ...configuredStage, executor: { kind: "disabled" as const } }
+        : configuredStage
     );
     assert.throws(
       () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({ stages: wrongReview })),
       (error: unknown) => error instanceof TaskBoardError && error.code === "INVALID_REQUEST"
     );
-    const wrongDeployment = automationStages().map((stage) =>
-      stage.stage === "deployment" ? { ...stage, executor: { kind: "human" as const } } : stage
+    const wrongDeployment = automationStages().map((configuredStage) =>
+      configuredStage.stage === "deployment"
+        ? { ...configuredStage, executor: { kind: "human" as const } }
+        : configuredStage
     );
     assert.throws(
       () => fixture.board.updateAutomationConfiguration(automationConfigurationRequest({ stages: wrongDeployment })),

@@ -320,11 +320,11 @@ interface WorkNode {
   objective: string;
   acceptanceCriteria: string[];
   dependencyNodeIds: string[];
-  stageTemplate: WorkflowStage[];
+  stageTemplate: NodeStage[];
   state: "pending" | "ready" | "active" | "blocked" | "stale" | "completed" | "cancelled";
 }
 
-type WorkflowStage = "research" | "planning" | "implementation" | "testing" | "verification";
+type NodeStage = "research" | "planning" | "implementation" | "testing" | "verification";
 ```
 
 Stage templates are configurable but must end in an evaluator stage. The initial template is Research → Planning → Implementation → Testing → Verification.
@@ -353,7 +353,7 @@ interface StageHandoff {
   acceptanceCriteria: CriterionResult[];
   blockers: string[];
   proposedPlanChange: PlanChangeProposal | null;
-  recommendedReturnStage: WorkflowStage | null;
+  recommendedReturnStage: NodeStage | null;
 }
 ```
 

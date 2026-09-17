@@ -17,8 +17,8 @@ describe("pipelineStageForStatus", () => {
     ["unrecognized", { label: "Unknown state — refresh the app", tone: "neutral" }],
   ] satisfies Array<[TaskStatus, ReturnType<typeof pipelineStageForStatus>]>)(
     "maps %s to its workspace stage",
-    (status, stage) => {
-      expect(pipelineStageForStatus(status)).toEqual(stage);
+    (status, statusDisplay) => {
+      expect(pipelineStageForStatus(status)).toEqual(statusDisplay);
     }
   );
 });

@@ -31,7 +31,7 @@ import {
   type WorkItem,
   type WorkItemState,
   type WorkNode,
-  type WorkflowStage,
+  type NodeStage,
 } from "#shared/task-board-contract";
 import {
   parseDesignRecordDraft,
@@ -183,8 +183,8 @@ export class ProjectsCollaborator {
     this.#verifyAttempts = new VerifyAttemptsCollaborator(runtime, {
       ...verifyDependencies,
       git: this.#git,
-      settleInTransaction: (nodeId, stage, passed, evidence) =>
-        this.#workflow.settleMachineVerifyAttemptInTransaction(nodeId, stage, passed, evidence),
+      settleInTransaction: (nodeId, nodeStage, passed, evidence) =>
+        this.#workflow.settleMachineVerifyAttemptInTransaction(nodeId, nodeStage, passed, evidence),
       activateNodes: (nodes) => this.activateWorkflowNodes(nodes),
       reconcileProject: (projectId) => this.reconcileWorkflowsBestEffort(projectId),
     });
@@ -1985,8 +1985,8 @@ export class ProjectsCollaborator {
     const projectId = String(candidate.resolved_project_id);
     const prospectiveStage =
       candidate.current_stage === null
-        ? ((JSON.parse(String(candidate.stage_template_json)) as WorkflowStage[])[0] ?? null)
-        : (String(candidate.current_stage) as WorkflowStage);
+        ? ((JSON.parse(String(candidate.stage_template_json)) as NodeStage[])[0] ?? null)
+        : (String(candidate.current_stage) as NodeStage);
     const configuration = this.automation.getConfiguration();
     const executor =
       prospectiveStage === null
@@ -2178,8 +2178,8 @@ export class ProjectsCollaborator {
     return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
   }
 
-  private workflowActivationOrphan(node: WorkNode, stage: WorkflowStage, assignedRole: string): Row | undefined {
-    const title = `${stage}: ${node.title}`;
+  private workflowActivationOrphan(node: WorkNode, nodeStage: NodeStage, assignedRole: string): Row | undefined {
+    const title = `${nodeStage}: ${node.title}`;
     const acceptanceCriteria = node.acceptanceCriteria.join("\n");
     return this.runtime.store.db
       .prepare(
@@ -2387,8 +2387,8 @@ export class ProjectsCollaborator {
           .get(current.nodeId);
         if (latestLifecycleEvent?.event_type !== "node_blocked") return;
       }
-      const stage = current.currentStage;
-      if (stage === null) return;
+      const nodeStage = current.currentStage;
+      if (nodeStage === null) return;
       const pipeline =
         pipelineTemplateShape(current.stageTemplate) === null
           ? undefined
@@ -2449,9 +2449,9 @@ export class ProjectsCollaborator {
         }
       }
       const configuration = this.automation.getConfiguration();
-      const configuredExecutor = configuration.stages.find((item) => item.stage === stage)?.executor;
+      const configuredExecutor = configuration.stages.find((item) => item.stage === nodeStage)?.executor;
       if (configuredExecutor?.kind === "machine_verify") {
-        const activation = this.#verifyAttempts.createStartingAttemptInTransaction(current.nodeId, stage);
+        const activation = this.#verifyAttempts.createStartingAttemptInTransaction(current.nodeId, nodeStage);
         if (activation.kind === "pipeline_required") {
           this.#workflow.blockNodeInTransaction(current.nodeId, "machine_verify requires a pipeline plan");
           return;
@@ -2462,17 +2462,20 @@ export class ProjectsCollaborator {
           current.nodeId,
           null,
           "stage_started",
-          `${current.title} entered ${stage}`
+          `${current.title} entered ${nodeStage}`
         );
         // Spawn only after commit so the process never races an attempt row that rolls back.
         this.runtime.store.afterCommit(() => this.#verifyAttempts.startAfterCommit(activation.verifyAttemptId));
         return;
       }
       if (configuredExecutor?.kind !== "agent_type") {
-        this.#workflow.blockNodeInTransaction(current.nodeId, `${current.title} has no configured ${stage} executor`);
+        this.#workflow.blockNodeInTransaction(
+          current.nodeId,
+          `${current.title} has no configured ${nodeStage} executor`
+        );
         return;
       }
-      if (stage === "testing") {
+      if (nodeStage === "testing") {
         const pipeline = this.runtime.store.db
           .prepare(
             `
@@ -2565,10 +2568,10 @@ export class ProjectsCollaborator {
           planDigests[skillId] === undefined ? [] : [[skillId, planDigests[skillId]]]
         )
       );
-      const title = `${stage}: ${current.title}`;
+      const title = `${nodeStage}: ${current.title}`;
       const acceptanceCriteria = current.acceptanceCriteria.join("\n");
-      const orphan = this.workflowActivationOrphan(current, stage, agentType.role);
-      if (owner.phase === "migrate" && migrateTaskCarriesCrossRepoContext(stage, agentType.role)) {
+      const orphan = this.workflowActivationOrphan(current, nodeStage, agentType.role);
+      if (owner.phase === "migrate" && migrateTaskCarriesCrossRepoContext(nodeStage, agentType.role)) {
         if (phasedPreflight?.interfaceReadiness?.kind !== "ready") {
           throw new Error("TASK_BOARD_DATABASE_CORRUPT:migrate_interface_preflight_missing");
         }
@@ -2624,13 +2627,13 @@ export class ProjectsCollaborator {
               requiresReview: false,
             })
           : this.runtime.requireTask(String(orphan.task_id));
-      this.#workflow.linkAttemptInTransaction(current.nodeId, task.taskId, stage, stageDigests);
+      this.#workflow.linkAttemptInTransaction(current.nodeId, task.taskId, nodeStage, stageDigests);
       this.#workflow.event(
         current.projectId,
         current.nodeId,
         task.taskId,
         "stage_started",
-        `${current.title} entered ${stage}`
+        `${current.title} entered ${nodeStage}`
       );
       if (orphan === undefined) wakeAgentId = String(agent.agent_id);
     });

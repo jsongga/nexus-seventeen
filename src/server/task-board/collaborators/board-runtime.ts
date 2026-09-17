@@ -23,7 +23,7 @@ import {
   type WorkerConnection,
   type WorkItemStage,
   type WorkItemState,
-  type WorkflowStage,
+  type NodeStage,
 } from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
 import type { TaskBoardConfig } from "../config.js";
@@ -242,7 +242,7 @@ export class TaskBoardRuntime {
       .map(phaseFromRow);
     const phaseStatus: TaskPhaseStatus = taskStatus === "completed" ? "completed" : "failed";
     for (const phase of phases) {
-      const stage = phase.stage;
+      const phaseStep = phase.stage;
       const nextVersion = phase.version + 1;
       const update = this.store.db
         .prepare(
@@ -253,7 +253,7 @@ export class TaskBoardRuntime {
         WHERE phase_id = ? AND version = ? AND ended_at IS NULL
       `
         )
-        .run(stage, phaseStatus, now, now, nextVersion, now, phase.phaseId, phase.version);
+        .run(phaseStep, phaseStatus, now, now, nextVersion, now, phase.phaseId, phase.version);
       if (Number(update.changes) !== 1) {
         throw conflict("TASK_PHASE_VERSION_CONFLICT", "Task phase changed while its task became terminal");
       }
@@ -266,7 +266,7 @@ export class TaskBoardRuntime {
           phaseId: phase.phaseId,
           previousVersion: phase.version,
           version: nextVersion,
-          stage,
+          stage: phaseStep,
           status: phaseStatus,
           terminalTaskStatus: taskStatus,
         },
@@ -380,7 +380,7 @@ export class TaskBoardRuntime {
       );
     }
     const nodeId = stringValue(link, "node_id");
-    const stage = stringValue(link, "stage") as WorkflowStage;
+    const nodeStage = stringValue(link, "stage") as NodeStage;
     const currentStage = nullableString(link, "current_stage");
     const state = stringValue(link, "state");
     const attempt = numberValue(link, "attempt");
@@ -392,8 +392,8 @@ export class TaskBoardRuntime {
       LIMIT 1
     `
       )
-      .get(nodeId, stage, attempt);
-    if (currentStage !== stage || (state !== "active" && state !== "blocked") || newerAttempt !== undefined) {
+      .get(nodeId, nodeStage, attempt);
+    if (currentStage !== nodeStage || (state !== "active" && state !== "blocked") || newerAttempt !== undefined) {
       throw conflict(
         TASK_BOARD_ERROR_CODES.TASK_WORKFLOW_ATTEMPT_SUPERSEDED,
         "Workflow task attempt is no longer recoverable"
@@ -410,7 +410,7 @@ export class TaskBoardRuntime {
       WHERE node_id = ? AND version = ? AND current_stage = ? AND state IN ('active', 'blocked')
     `
       )
-      .run(stage, now, nodeId, nodeVersion, stage);
+      .run(nodeStage, now, nodeId, nodeVersion, nodeStage);
     if (Number(update.changes) !== 1) {
       throw conflict(TASK_BOARD_ERROR_CODES.WORK_NODE_VERSION_CONFLICT, "Workflow node changed during task recovery");
     }
@@ -421,13 +421,13 @@ export class TaskBoardRuntime {
           this.store.db,
           stringValue(link, "work_item_id"),
           nodeId,
-          stage,
+          nodeStage,
           stringValue(link, "work_item_state") as WorkItemState
         ),
         actorType: "system",
         actorId: transition === "retry" ? "system:workflow-retry" : "system:workflow-reassign",
         now,
-        currentStage: stage,
+        currentStage: nodeStage,
       });
     }
     const projectId = stringValue(link, "project_id");
@@ -435,8 +435,8 @@ export class TaskBoardRuntime {
     const eventType = transition === "retry" ? "stage_task_retried" : "stage_task_reassigned";
     const summary =
       transition === "retry"
-        ? `${stringValue(link, "title")} ${stage} attempt resumed`
-        : `${stringValue(link, "title")} ${stage} attempt reassigned`;
+        ? `${stringValue(link, "title")} ${nodeStage} attempt resumed`
+        : `${stringValue(link, "title")} ${nodeStage} attempt reassigned`;
     this.store.db
       .prepare(
         `

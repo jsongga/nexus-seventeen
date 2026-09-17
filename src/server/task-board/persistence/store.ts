@@ -49,9 +49,9 @@ function sqlStringList(values: readonly string[], separator = ", "): string {
 }
 
 const DEFAULT_AUTOMATION_STAGES_JSON = JSON.stringify(
-  WORK_ITEM_STAGES.map((stage) => ({
-    executor: { kind: stage === "human_review" ? "human" : "disabled" },
-    stage,
+  WORK_ITEM_STAGES.map((configuredStage) => ({
+    executor: { kind: configuredStage === "human_review" ? "human" : "disabled" },
+    stage: configuredStage,
   }))
 );
 

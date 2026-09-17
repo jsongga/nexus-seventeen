@@ -31,7 +31,7 @@ import {
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
   type TaskKind,
-  type TaskPhaseStage,
+  type PhaseStep,
   type TaskPhaseStatus,
   VERIFY_WORKSPACE_SUFFIX,
   WORKFLOW_STAGES,
@@ -41,7 +41,7 @@ import {
   type WorkflowPipelineContext,
   type WorkflowPlanDraft,
   type WorkflowReviewContext,
-  type WorkflowStage,
+  type NodeStage,
   isValidCrossRepoMarkdown,
 } from "../index.js";
 import {
@@ -86,7 +86,7 @@ interface ValidatedTaskWakeClaim {
 interface ValidatedAgentTaskPhase {
   readonly phaseId: string;
   readonly title: string;
-  readonly stage: TaskPhaseStage;
+  readonly stage: PhaseStep;
   readonly status: TaskPhaseStatus;
   readonly parallelGroup: string | null;
   readonly orderKey: number;
@@ -160,7 +160,7 @@ interface ValidatedAgentContext {
   readonly workflow: Readonly<{
     planRevisionId: string;
     nodeId: string;
-    stage: WorkflowStage;
+    stage: NodeStage;
     skills: readonly SkillSnapshot[];
     dependencyHandoffs: readonly StageHandoff[];
     workspaceKey: string | null;
@@ -340,8 +340,8 @@ export function parseBoardProjectContexts(value: unknown, label: string): readon
   return Object.freeze(projects);
 }
 
-function assertWorkerPhaseCompletion(stage: TaskPhaseStage, status: TaskPhaseStatus, label: string): void {
-  if (stage === "done" && status !== "completed") {
+function assertWorkerPhaseCompletion(phaseStep: PhaseStep, status: TaskPhaseStatus, label: string): void {
+  if (phaseStep === "done" && status !== "completed") {
     throw new ContractValidationError(`${label} may use the legacy done stage only when status is completed`);
   }
 }
@@ -369,7 +369,7 @@ function parseWorkerHandoffEntity(value: unknown, index: number): StageHandoff {
   if (handoff.apiVersion !== TASK_BOARD_API_VERSION) {
     throw new ContractValidationError(`Workflow handoff ${index} version is invalid`);
   }
-  const stage = contractMember(handoff.stage, WORKFLOW_STAGES, `Workflow handoff ${index} stage`);
+  const nodeStage = contractMember(handoff.stage, WORKFLOW_STAGES, `Workflow handoff ${index} stage`);
   const outcome = contractMember(handoff.outcome, STAGE_HANDOFF_OUTCOMES, `Workflow handoff ${index} outcome`);
   const stringList = (input: unknown, label: string, maximum: number): readonly string[] => {
     if (!Array.isArray(input) || input.length > maximum) throw new ContractValidationError(`${label} is invalid`);
@@ -398,7 +398,7 @@ function parseWorkerHandoffEntity(value: unknown, index: number): StageHandoff {
     handoffId: identifier(handoff.handoffId, `workflow.handoffs[${index}].handoffId`),
     nodeId: identifier(handoff.nodeId, `workflow.handoffs[${index}].nodeId`),
     taskId: identifier(handoff.taskId, `workflow.handoffs[${index}].taskId`),
-    stage,
+    stage: nodeStage,
     outcome,
     summary: workerProse(handoff.summary, `workflow.handoffs[${index}].summary`, STAGE_HANDOFF_SUMMARY_MAX_CHARACTERS),
     evidence: stringList(handoff.evidence, `workflow.handoffs[${index}].evidence`, 32),
@@ -413,13 +413,13 @@ function parseWorkerHandoffEntity(value: unknown, index: number): StageHandoff {
 function parseWorkerContextPhase(value: unknown, index: number): ValidatedAgentTaskPhase {
   const label = `task.phases[${index}]`;
   const item = exact(value, ["phaseId", "title", "stage", "status", "parallelGroup", "orderKey", "version"], label);
-  const stage = contractMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`);
+  const phaseStep = contractMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`);
   const status = contractMember(item.status, TASK_PHASE_STATUSES, `${label}.status`);
-  assertWorkerPhaseCompletion(stage, status, label);
+  assertWorkerPhaseCompletion(phaseStep, status, label);
   return Object.freeze({
     phaseId: identifier(item.phaseId, `${label}.phaseId`),
     title: workerProse(item.title, `${label}.title`, 240),
-    stage,
+    stage: phaseStep,
     status,
     parallelGroup: item.parallelGroup === null ? null : identifier(item.parallelGroup, `${label}.parallelGroup`),
     orderKey: workerNonNegative(item.orderKey, `${label}.orderKey`),
@@ -430,13 +430,13 @@ function parseWorkerContextPhase(value: unknown, index: number): ValidatedAgentT
 export function parseWorkerPhaseUpdate(value: unknown, index: number): ValidatedAgentTaskPhaseUpdate {
   const label = `phases[${index}]`;
   const item = exact(value, ["phaseId", "title", "stage", "status", "parallelGroup", "orderKey"], label);
-  const stage = contractMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`);
+  const phaseStep = contractMember(item.stage, TASK_PHASE_STAGES, `${label}.stage`);
   const status = contractMember(item.status, TASK_PHASE_STATUSES, `${label}.status`);
-  assertWorkerPhaseCompletion(stage, status, label);
+  assertWorkerPhaseCompletion(phaseStep, status, label);
   return Object.freeze({
     phaseId: item.phaseId === null ? null : identifier(item.phaseId, `${label}.phaseId`),
     title: workerProse(item.title, `${label}.title`, 240),
-    stage,
+    stage: phaseStep,
     status,
     parallelGroup: item.parallelGroup === null ? null : identifier(item.parallelGroup, `${label}.parallelGroup`),
     orderKey: workerNonNegative(item.orderKey, `${label}.orderKey`),

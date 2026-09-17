@@ -77,8 +77,8 @@ export function agentPipelineFocus(agent: BoardAgent, tasks: BoardTask[]): Agent
     phases.find((item) => item.status === "pending") ??
     phases.at(-1) ??
     null;
-  const stage = task.kind === "manager_review" || agent.role === "manager" ? "Reviewing" : "Implementing";
-  if (phase === null) return { task, phase, stage, loop: null };
+  const agentStage = task.kind === "manager_review" || agent.role === "manager" ? "Reviewing" : "Implementing";
+  if (phase === null) return { task, phase, stage: agentStage, loop: null };
 
   const phaseIndex = phases.findIndex((item) => item.id === phase.id);
   let loop = 1;
@@ -109,7 +109,7 @@ export function agentPipelineFocus(agent: BoardAgent, tasks: BoardTask[]): Agent
     if (previousStage !== null && unit.stage < previousStage) loop += 1;
     previousStage = unit.stage;
   }
-  return { task, phase, stage, loop: loop > 1 ? loop : null };
+  return { task, phase, stage: agentStage, loop: loop > 1 ? loop : null };
 }
 
 interface ProjectResource {

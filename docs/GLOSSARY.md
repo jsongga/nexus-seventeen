@@ -44,14 +44,14 @@ still resolves a checkout.
 Three different vocabularies use the word. They are scoped by type, not renamed, because each set
 is compiled into a SQL `CHECK`.
 
-| Type             | Values                                                                                                                      | Means                              |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `WorkflowStage`  | research · planning · implementation · testing · verification                                                               | a **workflow node's** stage        |
-| `WorkItemStage`  | refinement · project_resolution · research · planning · implementation · testing · verification · human_review · deployment | a **work item's** position overall |
-| `TaskPhaseStage` | research · planning · execution · testing · review · done                                                                   | a **task phase's** step            |
+| Type            | Values                                                                                                                      | Means                              |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `NodeStage`     | research · planning · implementation · testing · verification                                                               | a **workflow node's** stage        |
+| `WorkItemStage` | refinement · project_resolution · research · planning · implementation · testing · verification · human_review · deployment | a **work item's** position overall |
+| `PhaseStep`     | research · planning · execution · testing · review · done                                                                   | a **task phase's** step            |
 
-They overlap without matching: `implementation` is a `WorkflowStage` and a `WorkItemStage` but not
-a `TaskPhaseStage`, which calls it `execution`. **Always name the scope** when a parameter or a
+They overlap without matching: `implementation` is a `NodeStage` and a `WorkItemStage` but not
+a `PhaseStep`, which calls it `execution`. **Always name the scope** when a parameter or a
 label says "stage".
 
 ## Phase — two senses
@@ -59,7 +59,7 @@ label says "stage".
 | Sense           | Values                      | Means                                                  |
 | --------------- | --------------------------- | ------------------------------------------------------ |
 | `WorkItemPhase` | expand · migrate · contract | a **decomposition** phase: the order children merge in |
-| Task phase      | a `TaskPhaseStage` sequence | steps within one task                                  |
+| Task phase      | a `PhaseStep` sequence      | steps within one task                                  |
 
 The decomposition sense is the load-bearing one — it encodes the expand/migrate/contract rollout
 that lets children in different repositories merge independently.

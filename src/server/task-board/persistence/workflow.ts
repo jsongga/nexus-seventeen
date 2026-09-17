@@ -37,7 +37,7 @@ import {
   type WorkflowPlanDraft,
   type WorkflowPipelineContext,
   type WorkflowReviewContext,
-  type WorkflowStage,
+  type NodeStage,
 } from "#shared/task-board-contract";
 import {
   ContractValidationError,
@@ -110,7 +110,7 @@ export interface MachineVerifyEvidence {
   readonly acceptanceCriteria: readonly CriterionResult[];
   readonly blockers: readonly string[];
 }
-const STAGES = new Set<WorkflowStage>(WORKFLOW_STAGES);
+const STAGES = new Set<NodeStage>(WORKFLOW_STAGES);
 const ID = new RegExp(IDENTIFIER_PATTERN, "u");
 const REVIEW_DIFFSTAT_MAX_CHARACTERS = 64_000;
 const REVIEW_COMMIT_MAX_ITEMS = 1_000;
@@ -261,7 +261,9 @@ function testingStageUsesMachineVerify(db: DatabaseSync): boolean {
   const stages = json<Array<{ readonly stage?: unknown; readonly executor?: { readonly kind?: unknown } }>>(
     row.stages_json
   );
-  return stages.some((stage) => stage.stage === "testing" && stage.executor?.kind === "machine_verify");
+  return stages.some(
+    (configuredStage) => configuredStage.stage === "testing" && configuredStage.executor?.kind === "machine_verify"
+  );
 }
 
 function verificationStageUsesEnabledAgentType(db: DatabaseSync): boolean {
@@ -278,7 +280,7 @@ function verificationStageUsesEnabledAgentType(db: DatabaseSync): boolean {
     }>
   >(row.stages_json);
   const agentTypes = json<Array<{ readonly agentTypeId?: unknown; readonly enabled?: unknown }>>(row.agent_types_json);
-  const executor = stages.find((stage) => stage.stage === "verification")?.executor;
+  const executor = stages.find((configuredStage) => configuredStage.stage === "verification")?.executor;
   return (
     executor?.kind === "agent_type" &&
     typeof executor.agentTypeId === "string" &&
@@ -298,7 +300,7 @@ function storedPlanPipelineShape(db: DatabaseSync, planRevisionId: string): Retu
     db
       .prepare("SELECT stage_template_json FROM work_nodes WHERE plan_revision_id=? ORDER BY node_id")
       .all(planRevisionId) as Row[]
-  ).map((row) => json<WorkflowStage[]>(row.stage_template_json));
+  ).map((row) => json<NodeStage[]>(row.stage_template_json));
   return templates.length === 1 ? pipelineTemplateShape(templates[0]!) : null;
 }
 
@@ -483,7 +485,7 @@ export class TransparentWorkflow {
   private activateDependencyFreeNodesAtTemplateStart(
     planRevisionId: string,
     updatedAt: string
-  ): Readonly<{ firstStage: WorkflowStage | null; readyNodes: readonly WorkNode[] }> {
+  ): Readonly<{ firstStage: NodeStage | null; readyNodes: readonly WorkNode[] }> {
     this.db
       .prepare(
         `
@@ -507,7 +509,7 @@ export class TransparentWorkflow {
       )
       .get(planRevisionId)?.current_stage;
     return Object.freeze({
-      firstStage: firstStage === undefined || firstStage === null ? null : (String(firstStage) as WorkflowStage),
+      firstStage: firstStage === undefined || firstStage === null ? null : (String(firstStage) as NodeStage),
       readyNodes: Object.freeze(this.nodes(planRevisionId).filter((node) => node.state === "ready")),
     });
   }
@@ -540,9 +542,9 @@ export class TransparentWorkflow {
       if (!ID.test(nodeId) || ids.has(nodeId))
         throw new TaskBoardError(400, "WORKFLOW_INVALID", "Node IDs must be unique identifiers");
       ids.add(nodeId);
-      const stages = node.stageTemplate.map((stage: WorkflowStage) => {
-        if (!STAGES.has(stage)) throw new TaskBoardError(400, "WORKFLOW_INVALID", "Node stage is invalid");
-        return stage;
+      const stages = node.stageTemplate.map((nodeStage: NodeStage) => {
+        if (!STAGES.has(nodeStage)) throw new TaskBoardError(400, "WORKFLOW_INVALID", "Node stage is invalid");
+        return nodeStage;
       });
       const terminalStage = stages.at(-1);
       if (stages.length === 0 || terminalStage !== "verification" || new Set(stages).size !== stages.length) {
@@ -745,7 +747,7 @@ export class TransparentWorkflow {
     if (attempt === undefined) return null;
     return this.claimContextForStage(
       String(attempt.node_id),
-      String(attempt.stage) as WorkflowStage,
+      String(attempt.stage) as NodeStage,
       json<Record<string, string>>(attempt.skill_digests_json),
       reviewInspection
     );
@@ -753,7 +755,7 @@ export class TransparentWorkflow {
 
   claimContextForStage(
     nodeId: string,
-    stage: WorkflowStage,
+    nodeStage: NodeStage,
     digests: Readonly<Record<string, string>>,
     reviewInspection: PipelineInspection | null = null
   ): NonNullable<ClaimRunResult["context"]["workflow"]> {
@@ -786,7 +788,7 @@ export class TransparentWorkflow {
       WHERE n.node_id=? AND plan.state='confirmed'
     `
       )
-      .get(stage, nodeId) as Row | undefined;
+      .get(nodeStage, nodeId) as Row | undefined;
     if (row === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_node_missing");
     const skills = this.skills.loadSync(Object.keys(digests));
     for (const skill of skills)
@@ -906,7 +908,7 @@ export class TransparentWorkflow {
     return Object.freeze({
       planRevisionId: String(row.plan_revision_id),
       nodeId: String(row.node_id),
-      stage: row.stage as WorkflowStage,
+      stage: row.stage as NodeStage,
       skills: Object.freeze(skills),
       dependencyHandoffs: Object.freeze(handoffs),
       workspaceKey:
@@ -1797,7 +1799,7 @@ export class TransparentWorkflow {
           : "Work item is not parked for recovery"
       );
     }
-    const template = json<WorkflowStage[]>(row.stage_template_json);
+    const template = json<NodeStage[]>(row.stage_template_json);
     if (!template.includes("implementation") || row.node_state !== "completed") {
       throw new Error("TASK_BOARD_DATABASE_CORRUPT:pipeline_implementation_stage_missing");
     }
@@ -2000,25 +2002,25 @@ export class TransparentWorkflow {
   linkAttempt(
     nodeId: string,
     taskId: string,
-    stage: WorkflowStage,
+    nodeStage: NodeStage,
     skillDigests: Readonly<Record<string, string>>
   ): void {
-    this.linkAttemptInternal(nodeId, taskId, stage, skillDigests, false);
+    this.linkAttemptInternal(nodeId, taskId, nodeStage, skillDigests, false);
   }
 
   linkAttemptInTransaction(
     nodeId: string,
     taskId: string,
-    stage: WorkflowStage,
+    nodeStage: NodeStage,
     skillDigests: Readonly<Record<string, string>>
   ): void {
-    this.linkAttemptInternal(nodeId, taskId, stage, skillDigests, true);
+    this.linkAttemptInternal(nodeId, taskId, nodeStage, skillDigests, true);
   }
 
   private linkAttemptInternal(
     nodeId: string,
     taskId: string,
-    stage: WorkflowStage,
+    nodeStage: NodeStage,
     skillDigests: Readonly<Record<string, string>>,
     inTransaction: boolean
   ): void {
@@ -2026,11 +2028,11 @@ export class TransparentWorkflow {
       const attempt = Number(
         this.db
           .prepare("SELECT COALESCE(MAX(attempt),0)+1 AS n FROM stage_attempts WHERE node_id=? AND stage=?")
-          .get(nodeId, stage)?.n
+          .get(nodeId, nodeStage)?.n
       );
       this.db
         .prepare("INSERT INTO stage_attempts VALUES(?,?,?,?,?,?)")
-        .run(`attempt_${randomUUID()}`, nodeId, taskId, stage, attempt, JSON.stringify(skillDigests));
+        .run(`attempt_${randomUUID()}`, nodeId, taskId, nodeStage, attempt, JSON.stringify(skillDigests));
       this.db
         .prepare("UPDATE work_nodes SET state='active',version=version+1,updated_at=? WHERE node_id=?")
         .run(this.now().toISOString(), nodeId);
@@ -2370,7 +2372,7 @@ export class TransparentWorkflow {
 
   settleMachineVerifyAttemptInTransaction(
     nodeId: string,
-    stage: WorkflowStage,
+    nodeStage: NodeStage,
     passed: boolean,
     evidence: MachineVerifyEvidence
   ): readonly WorkNode[] {
@@ -2408,9 +2410,9 @@ export class TransparentWorkflow {
       LIMIT 1
     `
       )
-      .get(nodeId, stage) as Row | undefined;
+      .get(nodeId, nodeStage) as Row | undefined;
     if (attempt === undefined) return Object.freeze([]);
-    if (attempt.current_stage !== stage || attempt.node_state !== "active") return Object.freeze([]);
+    if (attempt.current_stage !== nodeStage || attempt.node_state !== "active") return Object.freeze([]);
     const verifyAttemptId = String(attempt.verify_attempt_id);
     const taskId = `task_${verifyAttemptId}`;
     const handoffId = `handoff_${verifyAttemptId}`;
@@ -2421,7 +2423,7 @@ export class TransparentWorkflow {
     const now = this.now().toISOString();
     const projectId = String(attempt.project_id);
     const failedAttemptCount = Number(attempt.failed_attempt_count);
-    const template = json<WorkflowStage[]>(attempt.stage_template_json);
+    const template = json<NodeStage[]>(attempt.stage_template_json);
     const taskStatus = passed ? "completed" : "failed";
     const orderKey = Number(this.db.prepare("SELECT COALESCE(MAX(order_key),-1)+1 AS n FROM tasks").get()?.n);
     // stage_handoffs requires a task FK. This already-terminal, unassigned task is only the
@@ -2471,7 +2473,7 @@ export class TransparentWorkflow {
       handoffId,
       nodeId,
       taskId,
-      stage,
+      stage: nodeStage,
       outcome: passed ? "passed" : "failed",
       summary: evidence.summary,
       evidence: Object.freeze([...evidence.evidence]),
@@ -2483,7 +2485,7 @@ export class TransparentWorkflow {
     });
     this.db
       .prepare("INSERT INTO stage_handoffs VALUES(?,?,?,?,?,?,?)")
-      .run(handoffId, nodeId, taskId, stage, handoff.outcome, JSON.stringify(handoff), now);
+      .run(handoffId, nodeId, taskId, nodeStage, handoff.outcome, JSON.stringify(handoff), now);
 
     if (!passed) {
       if (template.includes("implementation") && failedAttemptCount < 3) {
@@ -2502,7 +2504,7 @@ export class TransparentWorkflow {
           nodeId,
           taskId,
           "stage_retry_ready",
-          `${stage} failed; returning to implementation (attempt ${failedAttemptCount + 1} of 3)`,
+          `${nodeStage} failed; returning to implementation (attempt ${failedAttemptCount + 1} of 3)`,
           now
         );
         return Object.freeze(this.nodesForIds([nodeId]));
@@ -2522,11 +2524,18 @@ export class TransparentWorkflow {
           currentStage: null,
         });
       }
-      this.event(projectId, nodeId, taskId, "stage_failed", `${stage} failed: ${evidence.summary.slice(0, 240)}`, now);
+      this.event(
+        projectId,
+        nodeId,
+        taskId,
+        "stage_failed",
+        `${nodeStage} failed: ${evidence.summary.slice(0, 240)}`,
+        now
+      );
       return Object.freeze([]);
     }
 
-    const next = template[template.indexOf(stage) + 1] ?? null;
+    const next = template[template.indexOf(nodeStage) + 1] ?? null;
     if (next !== null) {
       this.db
         .prepare(
@@ -2536,7 +2545,7 @@ export class TransparentWorkflow {
         )
         .run(next, now, nodeId);
       this.setWorkItemStage(String(attempt.plan_revision_id), nodeId, next, now);
-      this.event(projectId, nodeId, taskId, "stage_completed", `${stage} completed; ${next} is ready`, now);
+      this.event(projectId, nodeId, taskId, "stage_completed", `${nodeStage} completed; ${next} is ready`, now);
       return Object.freeze(this.nodesForIds([nodeId]));
     }
 
@@ -2681,7 +2690,7 @@ export class TransparentWorkflow {
     const apply = (): readonly WorkNode[] => {
       const nodeId = String(attempt.node_id);
       const projectId = String(attempt.project_id);
-      const stage = String(attempt.stage) as WorkflowStage;
+      const nodeStage = String(attempt.stage) as NodeStage;
       const passed = outcome === "completed";
       const supplied = draft ?? null;
       if (
@@ -2699,7 +2708,7 @@ export class TransparentWorkflow {
           throw new TaskBoardError(400, "HANDOFF_ARTIFACT_INVALID", "Handoff references an unavailable artifact");
         }
       }
-      const pipelineReview = stage === "verification" && attempt.pipeline_branch !== null;
+      const pipelineReview = nodeStage === "verification" && attempt.pipeline_branch !== null;
       if (reviewFindings !== undefined && !pipelineReview) {
         throw new TaskBoardError(
           400,
@@ -2714,7 +2723,7 @@ export class TransparentWorkflow {
           actual: redactForPersistence(finding.actual),
           findingId: `finding_${String(index).padStart(2, "0")}_${randomUUID()}`,
           nodeId,
-          stage,
+          stage: nodeStage,
           round: Number(attempt.attempt),
           blocking: reviewFindingBlocks(finding.category),
           createdAt: now,
@@ -2767,7 +2776,7 @@ export class TransparentWorkflow {
         );
       }
       const scopeFailureDetail =
-        passed && stage === "implementation" && attempt.pipeline_branch !== null
+        passed && nodeStage === "implementation" && attempt.pipeline_branch !== null
           ? scopeCheck === null
             ? "scope check failed"
             : scopeCheck.ok
@@ -2798,7 +2807,7 @@ export class TransparentWorkflow {
         handoffId: `handoff_${randomUUID()}`,
         nodeId,
         taskId,
-        stage,
+        stage: nodeStage,
         outcome:
           scopeFailureDetail === null ? (persistedSupplied?.outcome ?? (passed ? "passed" : "failed")) : "failed",
         summary: scopeFailureDetail ?? persistedSupplied?.summary ?? result,
@@ -2813,13 +2822,13 @@ export class TransparentWorkflow {
           scopeFailureDetail === null
             ? failedReview
               ? "implementation"
-              : (persistedSupplied?.recommendedReturnStage ?? (passed ? null : stage))
-            : stage,
+              : (persistedSupplied?.recommendedReturnStage ?? (passed ? null : nodeStage))
+            : nodeStage,
         createdAt: now,
       });
       this.db
         .prepare("INSERT OR IGNORE INTO stage_handoffs VALUES(?,?,?,?,?,?,?)")
-        .run(handoff.handoffId, nodeId, taskId, stage, handoff.outcome, JSON.stringify(handoff), now);
+        .run(handoff.handoffId, nodeId, taskId, nodeStage, handoff.outcome, JSON.stringify(handoff), now);
       const parkAttempt = (detail: string): readonly WorkNode[] => {
         this.db
           .prepare("UPDATE work_nodes SET state='blocked',version=version+1,updated_at=? WHERE node_id=?")
@@ -2838,11 +2847,11 @@ export class TransparentWorkflow {
             },
           });
         }
-        this.event(projectId, nodeId, taskId, "stage_failed", `${stage} blocked: ${detail.slice(0, 240)}`, now);
+        this.event(projectId, nodeId, taskId, "stage_failed", `${nodeStage} blocked: ${detail.slice(0, 240)}`, now);
         return Object.freeze([]);
       };
       const brightLineDetail =
-        attempt.pipeline_branch !== null && stage === "implementation" && !passed
+        attempt.pipeline_branch !== null && nodeStage === "implementation" && !passed
           ? result.startsWith("BRIGHT_LINE:")
             ? result
             : persistedSupplied?.summary.startsWith("BRIGHT_LINE:") === true
@@ -2858,8 +2867,8 @@ export class TransparentWorkflow {
             ? handoff.recommendedReturnStage
             : (persistedSupplied?.recommendedReturnStage ?? null);
         const attemptNumber = Number(attempt.attempt);
-        const template = json<WorkflowStage[]>(attempt.stage_template_json);
-        const maxAttempts = stage === "verification" && attempt.pipeline_branch !== null ? 4 : 3;
+        const template = json<NodeStage[]>(attempt.stage_template_json);
+        const maxAttempts = nodeStage === "verification" && attempt.pipeline_branch !== null ? 4 : 3;
         if (returnStage !== null && template.includes(returnStage) && attemptNumber < maxAttempts) {
           this.db
             .prepare(
@@ -2872,7 +2881,7 @@ export class TransparentWorkflow {
             nodeId,
             taskId,
             "stage_retry_ready",
-            `${stage} failed; returning to ${returnStage} (attempt ${attemptNumber + 1} of ${maxAttempts})`,
+            `${nodeStage} failed; returning to ${returnStage} (attempt ${attemptNumber + 1} of ${maxAttempts})`,
             now
           );
           return Object.freeze(this.nodesForIds([nodeId]));
@@ -2904,17 +2913,17 @@ export class TransparentWorkflow {
             });
           }
         }
-        this.event(projectId, nodeId, taskId, "stage_failed", `${stage} failed: ${result.slice(0, 240)}`, now);
+        this.event(projectId, nodeId, taskId, "stage_failed", `${nodeStage} failed: ${result.slice(0, 240)}`, now);
         return Object.freeze([]);
       }
-      const template = json<WorkflowStage[]>(attempt.stage_template_json);
-      const next = template[template.indexOf(stage) + 1] ?? null;
+      const template = json<NodeStage[]>(attempt.stage_template_json);
+      const next = template[template.indexOf(nodeStage) + 1] ?? null;
       if (next !== null) {
         this.db
           .prepare("UPDATE work_nodes SET state='ready',current_stage=?,version=version+1,updated_at=? WHERE node_id=?")
           .run(next, now, nodeId);
         this.setWorkItemStage(String(attempt.plan_revision_id), nodeId, next, now);
-        this.event(projectId, nodeId, taskId, "stage_completed", `${stage} completed; ${next} is ready`, now);
+        this.event(projectId, nodeId, taskId, "stage_completed", `${nodeStage} completed; ${next} is ready`, now);
         return Object.freeze(this.nodesForIds([nodeId]));
       }
       this.db
@@ -2945,12 +2954,7 @@ export class TransparentWorkflow {
           .prepare("SELECT current_stage FROM work_nodes WHERE node_id=?")
           .get(newlyReady[0]!)?.current_stage;
         if (nextStage !== null && nextStage !== undefined) {
-          this.setWorkItemStage(
-            String(attempt.plan_revision_id),
-            newlyReady[0]!,
-            String(nextStage) as WorkflowStage,
-            now
-          );
+          this.setWorkItemStage(String(attempt.plan_revision_id), newlyReady[0]!, String(nextStage) as NodeStage, now);
         }
       }
       const planRevisionId = String(attempt.plan_revision_id);
@@ -3005,7 +3009,7 @@ export class TransparentWorkflow {
     return [...plans].flatMap((plan) => this.nodes(plan)).filter((node) => ids.includes(node.nodeId));
   }
 
-  private setWorkItemStage(planRevisionId: string, nodeId: string, stage: WorkflowStage, updatedAt: string): void {
+  private setWorkItemStage(planRevisionId: string, nodeId: string, nodeStage: NodeStage, updatedAt: string): void {
     const plan = this.db
       .prepare(
         `
@@ -3019,7 +3023,7 @@ export class TransparentWorkflow {
     if (plan === undefined) throw new Error("TASK_BOARD_DATABASE_CORRUPT:workflow_plan_work_item");
     if (isTerminalWorkItemState(String(plan.state) as WorkItemState)) return;
     const currentState = String(plan.state) as WorkItemState;
-    const mappedState = workItemStateForNodeStage(this.db, String(plan.work_item_id), nodeId, stage, currentState);
+    const mappedState = workItemStateForNodeStage(this.db, String(plan.work_item_id), nodeId, nodeStage, currentState);
     // An open question keeps the work item parked even if its workflow node has advanced.
     const parkedWithOpenQuestions =
       currentState === "parked" &&
@@ -3048,13 +3052,13 @@ export class TransparentWorkflow {
       actorType: "system",
       actorId: "system:workflow",
       now: updatedAt,
-      currentStage: stage,
+      currentStage: nodeStage,
       ...(parkedWithOpenQuestions
         ? { park: { category: "open_question" as const, reason: "work item remains parked for open questions" } }
         : {}),
       // Touch only when the stage genuinely moved — an unchanged stage must
       // not bump the version and spuriously invalidate concurrent CAS holders.
-      ...(parkedWithOpenQuestions && stage !== plan.current_stage ? { touch: true } : {}),
+      ...(parkedWithOpenQuestions && nodeStage !== plan.current_stage ? { touch: true } : {}),
     });
   }
 
@@ -3076,8 +3080,8 @@ export class TransparentWorkflow {
           objective: String(row.objective),
           acceptanceCriteria: Object.freeze(json<string[]>(row.acceptance_criteria_json)),
           dependencyNodeIds: Object.freeze(json<string[]>(row.dependencies)),
-          stageTemplate: Object.freeze(json<WorkflowStage[]>(row.stage_template_json)),
-          currentStage: row.current_stage as WorkflowStage | null,
+          stageTemplate: Object.freeze(json<NodeStage[]>(row.stage_template_json)),
+          currentStage: row.current_stage as NodeStage | null,
           state: row.state as WorkNode["state"],
           version: Number(row.version),
           createdAt: String(row.created_at),

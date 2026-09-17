@@ -134,7 +134,7 @@ export function AutomationPage({
       .map((entry) => entry.stage);
   }, [draft, editingAgentType]);
 
-  function updateStage(stage: WorkItemStage, agentTypeId: string) {
+  function updateStage(workItemStage: WorkItemStage, agentTypeId: string) {
     onEditorStateChange((current) =>
       current.draft === null
         ? current
@@ -143,7 +143,9 @@ export function AutomationPage({
             draft: {
               ...current.draft,
               stages: current.draft.stages.map((entry) =>
-                entry.stage === stage ? { stage, executor: automationExecutorFromValue(agentTypeId) } : entry
+                entry.stage === workItemStage
+                  ? { stage: workItemStage, executor: automationExecutorFromValue(agentTypeId) }
+                  : entry
               ),
             },
           }
@@ -454,14 +456,14 @@ export function AutomationPage({
                   </p>
                 </div>
                 <ol className="divide-y divide-line">
-                  {AUTOMATION_STAGE_ORDER.map((stage, index) => {
-                    const entry = draft.stages.find((candidate) => candidate.stage === stage);
+                  {AUTOMATION_STAGE_ORDER.map((workItemStage, index) => {
+                    const entry = draft.stages.find((candidate) => candidate.stage === workItemStage);
                     if (!entry) return null;
-                    const locked = stage === "human_review" || stage === "deployment";
-                    const eligible = eligibleAgentTypes(stage, draft.agentTypes);
+                    const locked = workItemStage === "human_review" || workItemStage === "deployment";
+                    const eligible = eligibleAgentTypes(workItemStage, draft.agentTypes);
                     return (
                       <li
-                        key={stage}
+                        key={workItemStage}
                         className="grid gap-4 px-4 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(220px,.8fr)] sm:items-center sm:px-6"
                       >
                         <div className="flex min-w-0 items-start gap-3">
@@ -469,38 +471,38 @@ export function AutomationPage({
                             {index + 1}
                           </span>
                           <div>
-                            <h3 className="text-sm font-medium text-ink">{stageLabels[stage]}</h3>
-                            <p className="mt-1 text-xs leading-5 text-muted">{stageDescriptions[stage]}</p>
+                            <h3 className="text-sm font-medium text-ink">{stageLabels[workItemStage]}</h3>
+                            <p className="mt-1 text-xs leading-5 text-muted">{stageDescriptions[workItemStage]}</p>
                           </div>
                         </div>
                         {locked ? (
                           <div
                             className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-line bg-muted-surface px-3.5"
-                            aria-label={`${stageLabels[stage]} executor`}
+                            aria-label={`${stageLabels[workItemStage]} executor`}
                           >
                             <span className="flex items-center gap-2 text-sm text-ink">
-                              {stage === "human_review" ? <ShieldCheck size={16} /> : <LockKeyhole size={16} />}
-                              {stage === "human_review" ? "Human owner" : "Disabled"}
+                              {workItemStage === "human_review" ? <ShieldCheck size={16} /> : <LockKeyhole size={16} />}
+                              {workItemStage === "human_review" ? "Human owner" : "Disabled"}
                             </span>
                             <Pill>Locked</Pill>
                           </div>
                         ) : (
                           <div>
                             <label
-                              htmlFor={`automation-stage-${stage}`}
+                              htmlFor={`automation-stage-${workItemStage}`}
                               className="mb-1.5 block text-xs font-medium text-ink"
                             >
                               Executor
                             </label>
                             <select
-                              id={`automation-stage-${stage}`}
-                              aria-label={`${stageLabels[stage]} executor`}
+                              id={`automation-stage-${workItemStage}`}
+                              aria-label={`${stageLabels[workItemStage]} executor`}
                               className={inputClass}
                               value={executorValue(entry.executor)}
-                              onChange={(event) => updateStage(stage, event.target.value)}
+                              onChange={(event) => updateStage(workItemStage, event.target.value)}
                             >
                               <option value="">Disabled</option>
-                              {stage === "testing" ? (
+                              {workItemStage === "testing" ? (
                                 <option value={machineVerifyExecutorValue}>Machine verify</option>
                               ) : null}
                               {eligible.map((agentType) => (

@@ -10,11 +10,11 @@ test("worker wake reasons mirror the shared contract", () => {
   assert.deepEqual([...TASK_WAKE_REASONS], [...WAKEUP_REASONS]);
 });
 
-function providerPhase(provider: "codex" | "claude", stage: string, status: string): LivePhaseSignal | null {
+function providerPhase(provider: "codex" | "claude", phaseStep: string, status: string): LivePhaseSignal | null {
   const marker = `STEWARD_PHASE_JSON=${JSON.stringify({
     key: "phase-one",
     title: "Inspect",
-    stage,
+    stage: phaseStep,
     status,
     parallelGroup: null,
   })}\n`;
@@ -37,7 +37,7 @@ function providerPhase(provider: "codex" | "claude", stage: string, status: stri
 test("provider phase-signal extraction accepts exactly the shared phase enums", () => {
   for (const provider of ["codex", "claude"] as const) {
     const acceptedStages = [...TASK_PHASE_STAGES, "not_a_contract_member"].filter(
-      (stage) => providerPhase(provider, stage, stage === "done" ? "completed" : "pending") !== null
+      (phaseStep) => providerPhase(provider, phaseStep, phaseStep === "done" ? "completed" : "pending") !== null
     );
     assert.deepEqual(acceptedStages, [...TASK_PHASE_STAGES]);
 

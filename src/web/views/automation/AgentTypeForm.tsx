@@ -103,7 +103,7 @@ export function AgentTypeForm({
     }
     if (!enabled && usedByStages.length > 0) {
       setError(
-        `Assign ${usedByStages.map((stage) => stageLabels[stage]).join(", ")} elsewhere before disabling this type.`
+        `Assign ${usedByStages.map((configuredStage) => stageLabels[configuredStage]).join(", ")} elsewhere before disabling this type.`
       );
       return;
     }
@@ -257,8 +257,8 @@ export function AgentTypeForm({
 
       {initial && usedByStages.length > 0 ? (
         <p className="rounded-xl border border-line bg-muted-surface px-4 py-3 text-xs leading-5 text-muted">
-          Used by {usedByStages.map((stage) => stageLabels[stage]).join(", ")}. Reassign those stages before disabling
-          or deleting this type.
+          Used by {usedByStages.map((configuredStage) => stageLabels[configuredStage]).join(", ")}. Reassign those
+          stages before disabling or deleting this type.
         </p>
       ) : null}
 

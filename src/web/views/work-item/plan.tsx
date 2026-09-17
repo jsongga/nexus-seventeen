@@ -21,10 +21,10 @@ export function WorkflowNodeCard({ node, allNodes }: { node: WorkflowNode; allNo
         <div className="mt-3">
           <p className="text-[11px] font-medium text-muted">Stages</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {node.stageTemplate.map((stage, index) => (
-              <span key={stage} className="inline-flex items-center gap-1.5">
+            {node.stageTemplate.map((nodeStage, index) => (
+              <span key={nodeStage} className="inline-flex items-center gap-1.5">
                 {index > 0 ? <ArrowRight size={11} className="text-muted" aria-hidden="true" /> : null}
-                <Pill>{prettyStatus(stage)}</Pill>
+                <Pill>{prettyStatus(nodeStage)}</Pill>
               </span>
             ))}
           </div>

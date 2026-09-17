@@ -119,3 +119,29 @@ the point, not decoration.
 
 **Ask the human to approve each redaction.** Turns every false positive into an interruption, on
 a path that runs unattended by design. Rejected.
+
+## +Y was attempted and abandoned (2026-09-16)
+
+Narrowing `CREDENTIAL_REJECTION_PATTERNS` was built on branch `wt/credential-narrow` and **not
+merged**. It did what it set out to do — a PEM header in prose stopped eating the rest of the
+sentence — and in doing so it stopped redacting real keys.
+
+Reproduced directly, same input against both trees:
+
+| Input                                                | main     | narrowed           |
+| ---------------------------------------------------- | -------- | ------------------ |
+| footer-less key, one trailing space after the header | redacted | **payload leaked** |
+
+Review found nine such shapes, including a `BEGIN OPENSSH PRIVATE KEY` closed by a mismatched
+footer and the JSON-escaped-newline form that `runtime/claude.ts` produces for every tool-call
+detail — plus a quadratic blowup (1 ms → 1–3 s on 512 KiB of attacker-influenced stderr).
+
+**The trade was wrong in principle, not just in execution.** The benefit was prose fidelity: a
+sentence keeps its trailing clause. The cost was a credential reaching a model vendor. A control
+that over-redacts is annoying; one that under-redacts is the failure it exists to prevent. Since
+redaction already made a false positive cost one word rather than a run, the over-matching this
+would have replaced is _already_ cheap — so there was little to win and everything to lose.
+
+**If revisited**, narrow the match's _end boundary_ rather than its trigger: keep every shape that
+currently matches, and only shorten how far the replacement extends. That cannot remove coverage
+by construction, which is the property this attempt lacked.

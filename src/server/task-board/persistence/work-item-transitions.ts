@@ -50,13 +50,13 @@ interface InitialWorkItemTransitionRequest {
 }
 
 export function workItemStateForStage(
-  stage: WorkItemStage | null,
+  workItemStage: WorkItemStage | null,
   options: Readonly<{ fixLoop?: boolean }> = {}
 ): WorkItemState {
-  if (stage === "implementation") return options.fixLoop === true ? "fixing" : "implementing";
-  if (stage === "deployment") return "implementing";
-  if (stage === "testing") return "verifying";
-  if (stage === "verification") return "reviewing";
+  if (workItemStage === "implementation") return options.fixLoop === true ? "fixing" : "implementing";
+  if (workItemStage === "deployment") return "implementing";
+  if (workItemStage === "testing") return "verifying";
+  if (workItemStage === "verification") return "reviewing";
   return "planning";
 }
 
@@ -68,11 +68,11 @@ export function workItemStateForNodeStage(
   db: TaskBoardStore["db"],
   workItemId: string,
   nodeId: string | null,
-  stage: WorkItemStage | null,
+  workItemStage: WorkItemStage | null,
   currentState: WorkItemState | null
 ): WorkItemState {
   let loopActive = false;
-  if (stage === "implementation" && nodeId !== null) {
+  if (workItemStage === "implementation" && nodeId !== null) {
     const rounds = db
       .prepare(
         `
@@ -91,7 +91,7 @@ export function workItemStateForNodeStage(
       rounds.blocking_round === rounds.verification_attempt;
   }
   const parkedFromFixing =
-    stage === "implementation" &&
+    workItemStage === "implementation" &&
     currentState === "parked" &&
     (
       db
@@ -106,8 +106,8 @@ export function workItemStateForNodeStage(
         )
         .get(workItemId) as Readonly<{ from_state: WorkItemState | null }> | undefined
     )?.from_state === "fixing";
-  const fixLoop = stage === "implementation" && (currentState === "fixing" || parkedFromFixing || loopActive);
-  return workItemStateForStage(stage, { fixLoop });
+  const fixLoop = workItemStage === "implementation" && (currentState === "fixing" || parkedFromFixing || loopActive);
+  return workItemStateForStage(workItemStage, { fixLoop });
 }
 
 export function registerWorkItemTransitionStore(store: TaskBoardStore): void {

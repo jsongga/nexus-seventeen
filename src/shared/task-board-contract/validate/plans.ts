@@ -16,7 +16,7 @@ import {
   WORKFLOW_STAGES,
   WORK_ITEM_PHASES,
   type WorkflowPlanDraft,
-  type WorkflowStage,
+  type NodeStage,
   declaredScopesOverlap,
   normalizeDeclaredScope,
 } from "../index.js";
@@ -461,13 +461,13 @@ export function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): Wo
       messages.workflowNodeLabel(index),
       policy
     );
-    let stageTemplate: readonly WorkflowStage[];
+    let stageTemplate: readonly NodeStage[];
     if (policy.stageListKind === "members") {
       if (!Array.isArray(node.stageTemplate) || node.stageTemplate.length < 1 || node.stageTemplate.length > 5) {
         throw new ContractValidationError(messages.workflowNodeStagesInvalid(index));
       }
-      stageTemplate = node.stageTemplate.map((stage, stageIndex) =>
-        contractMember(stage, WORKFLOW_STAGES, messages.workflowNodeStageLabel(index, stageIndex))
+      stageTemplate = node.stageTemplate.map((nodeStage, stageIndex) =>
+        contractMember(nodeStage, WORKFLOW_STAGES, messages.workflowNodeStageLabel(index, stageIndex))
       );
       if (
         new Set(stageTemplate).size !== stageTemplate.length ||
@@ -481,11 +481,11 @@ export function parseWorkflowPlan(value: unknown, policy: DraftParserPolicy): Wo
         stages.length > 5 ||
         new Set(stages).size !== stages.length ||
         (stages.at(-1) !== "verification" && stages.at(-1) !== "testing") ||
-        stages.some((stage) => !(WORKFLOW_STAGES as readonly string[]).includes(stage))
+        stages.some((nodeStage) => !(WORKFLOW_STAGES as readonly string[]).includes(nodeStage))
       ) {
         throw new ContractValidationError(messages.workflowNodeStageOrderInvalid(index));
       }
-      stageTemplate = stages as readonly WorkflowStage[];
+      stageTemplate = stages as readonly NodeStage[];
     }
     return Object.freeze({
       nodeId: identifier(node.nodeId, `workflowPlan.nodes[${index}].nodeId`),

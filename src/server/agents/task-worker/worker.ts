@@ -244,8 +244,8 @@ interface LiveTaskState {
   estimateTracking: boolean;
 }
 
-function livePhaseTitle(stage: Exclude<AgentTaskPhase["stage"], "done">): string {
-  switch (stage) {
+function livePhaseTitle(phaseStep: Exclude<AgentTaskPhase["stage"], "done">): string {
+  switch (phaseStep) {
     case "research":
       return "Review task";
     case "planning":
@@ -1036,10 +1036,10 @@ export class TaskWorker {
   async #advanceLivePhase(
     claim: TaskWakeClaim,
     liveTask: LiveTaskState,
-    stage: Exclude<AgentTaskPhase["stage"], "done">
+    phaseStep: Exclude<AgentTaskPhase["stage"], "done">
   ): Promise<void> {
     if (!liveTask.phaseTracking || liveTask.phaseSource !== "inferred" || claim.taskId === null) return;
-    if (liveTask.currentPhase?.stage === stage && liveTask.currentPhase.status === "in_progress") return;
+    if (liveTask.currentPhase?.stage === phaseStep && liveTask.currentPhase.status === "in_progress") return;
     try {
       const current = liveTask.currentPhase;
       if (current !== null && current.status !== "completed" && current.status !== "failed") {
@@ -1051,8 +1051,8 @@ export class TaskWorker {
       }
       const created = await this.#options.board.createTaskPhase({
         claim,
-        title: livePhaseTitle(stage),
-        stage,
+        title: livePhaseTitle(phaseStep),
+        stage: phaseStep,
         parallelGroup: null,
       });
       liveTask.currentPhase = await this.#options.board.updateTaskPhase({
@@ -1140,12 +1140,12 @@ export class TaskWorker {
         phase.status !== signal.status ||
         phase.parallelGroup !== signal.parallelGroup
       ) {
-        const stage = signal.stage === "done" ? phase.stage : signal.stage;
+        const phaseStep = signal.stage === "done" ? phase.stage : signal.stage;
         phase = await this.#options.board.updateTaskPhase({
           claim,
           phase,
           ...(phase.title === signal.title ? {} : { title: signal.title }),
-          ...(phase.stage === stage ? {} : { stage }),
+          ...(phase.stage === phaseStep ? {} : { stage: phaseStep }),
           ...(phase.status === signal.status ? {} : { status: signal.status }),
           ...(phase.parallelGroup === signal.parallelGroup ? {} : { parallelGroup: signal.parallelGroup }),
         });
@@ -1253,8 +1253,8 @@ export class TaskWorker {
       const current = this.#state.active;
       if (current === null || current.claim.runId !== claim.runId || current.phase === "outputs_pending") return false;
       sequence += 1;
-      const stage = phaseStageFromActivity(body);
-      if (stage !== null) await this.#advanceLivePhase(claim, liveTask, stage);
+      const phaseStep = phaseStageFromActivity(body);
+      if (phaseStep !== null) await this.#advanceLivePhase(claim, liveTask, phaseStep);
       const request = {
         claim,
         output: Object.freeze({ type: "progress" as const, body }),

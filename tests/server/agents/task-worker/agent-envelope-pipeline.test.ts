@@ -149,11 +149,11 @@ test("credential-safety redacts string leaves without matching across object str
   });
 });
 
-function pipelineWorkflow(stage: "implementation" | "testing" | "verification") {
+function pipelineWorkflow(nodeStage: "implementation" | "testing" | "verification") {
   return {
     planRevisionId: "plan-one",
     nodeId: "node-one",
-    stage,
+    stage: nodeStage,
     skills: [],
     dependencyHandoffs: [],
     workspaceKey: "work-item-one",

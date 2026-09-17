@@ -13,8 +13,11 @@ import {
 
 export const machineVerifyExecutorValue = "__machine_verify__";
 
-export function eligibleAgentTypes(stage: WorkItemStage, agentTypes: AutomationAgentType[]): AutomationAgentType[] {
-  const allowedRoles = AUTOMATION_STAGE_ALLOWED_ROLES[stage];
+export function eligibleAgentTypes(
+  workItemStage: WorkItemStage,
+  agentTypes: AutomationAgentType[]
+): AutomationAgentType[] {
+  const allowedRoles = AUTOMATION_STAGE_ALLOWED_ROLES[workItemStage];
   return agentTypes.filter((agentType) => agentType.enabled && allowedRoles.includes(agentType.role));
 }
 

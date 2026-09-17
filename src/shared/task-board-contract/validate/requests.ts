@@ -39,7 +39,7 @@ import {
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
   TASK_STATUSES,
-  type TaskPhaseStage,
+  type PhaseStep,
   type TaskPhaseStatus,
   type TaskStatus,
   type UpdateAutomationConfigurationRequest,
@@ -348,10 +348,13 @@ function parseBoardAutomationStages(
   const stages = value.map((candidate, index): AutomationPipelineStage => {
     const label = `stages[${index}]`;
     const item = boardExact(candidate, ["stage", "executor"], label);
-    const stage = WORK_ITEM_STAGES[index];
-    if (stage === undefined || item.stage !== stage)
+    const workItemStage = WORK_ITEM_STAGES[index];
+    if (workItemStage === undefined || item.stage !== workItemStage)
       boardFailure("stages must use the canonical order without duplicates");
-    return Object.freeze({ stage, executor: parseBoardAutomationExecutor(item.executor, `${label}.executor`) });
+    return Object.freeze({
+      stage: workItemStage,
+      executor: parseBoardAutomationExecutor(item.executor, `${label}.executor`),
+    });
   });
   const types = new Map(agentTypes.map((entry) => [entry.agentTypeId, entry] as const));
   for (const entry of stages) {
@@ -511,7 +514,7 @@ export function parseBoardUpdateTaskPhase(value: unknown): UpdateTaskPhaseReques
   const result: {
     version: number;
     title?: string;
-    stage?: TaskPhaseStage;
+    stage?: PhaseStep;
     status?: TaskPhaseStatus;
     parallelGroup?: string | null;
     orderKey?: number;

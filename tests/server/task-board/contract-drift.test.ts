@@ -45,7 +45,7 @@ import { boardFixture, databasePath, workItemRequest } from "./helpers.js";
 test("workflow persistence accepts contract identifiers and exactly the contract stages", async () => {
   const fixture = await boardFixture();
   try {
-    for (const [index, stage] of [...WORKFLOW_STAGES, "not_a_contract_member"].entries()) {
+    for (const [index, nodeStage] of [...WORKFLOW_STAGES, "not_a_contract_member"].entries()) {
       const item = fixture.board.createWorkItem(
         workItemRequest({
           projectTarget: { mode: "explicit", projectId: fixture.project.projectId },
@@ -66,11 +66,11 @@ test("workflow persistence accepts contract identifiers and exactly the contract
             objective: "Verify persistence accepts the shared contract.",
             acceptanceCriteria: ["The proposal is persisted."],
             dependencyNodeIds: [],
-            stageTemplate: stage === "verification" ? [stage] : [stage, "verification"],
+            stageTemplate: nodeStage === "verification" ? [nodeStage] : [nodeStage, "verification"],
           },
         ],
       };
-      if (stage === "not_a_contract_member") {
+      if (nodeStage === "not_a_contract_member") {
         assert.throws(
           () => fixture.board.proposeWorkflow(proposal as never),
           (error: unknown) => error instanceof TaskBoardError && error.code === "WORKFLOW_INVALID"

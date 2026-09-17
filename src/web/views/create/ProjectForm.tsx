@@ -55,7 +55,7 @@ export function ProjectForm({
   const [browseFilter, setBrowseFilter] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [workspacePath, setWorkspacePath] = useState("");
+  const [repositoryPath, setRepositoryPath] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [pasteOutsideRoots, setPasteOutsideRoots] = useState(false);
   const [validatingPaste, setValidatingPaste] = useState(false);
@@ -91,10 +91,10 @@ export function ProjectForm({
     [listing]
   );
 
-  const normalizedPath = normalizedWorkspacePath(workspacePath);
+  const normalizedPath = normalizedWorkspacePath(repositoryPath);
   const validName = name.trim().length > 0 && name.trim().length <= 160;
   const validPastePath = taskWorkspaceRefs(normalizedPath).length === 1;
-  const showPathError = workspacePath.trim().length > 0 && !validPastePath;
+  const showPathError = repositoryPath.trim().length > 0 && !validPastePath;
   const pasteHelpId = "project-folder-help";
   const pathErrorId = "project-folder-error";
   const pasteServerErrorId = "project-folder-server-error";
@@ -175,8 +175,8 @@ export function ProjectForm({
   }, [browseError, listing, mode]);
 
   useEffect(() => {
-    onDirtyChange(fieldsAreDirty([listFilter, browseFilter, name, workspacePath]) || selectedPath !== null);
-  }, [browseFilter, listFilter, name, onDirtyChange, selectedPath, workspacePath]);
+    onDirtyChange(fieldsAreDirty([listFilter, browseFilter, name, repositoryPath]) || selectedPath !== null);
+  }, [browseFilter, listFilter, name, onDirtyChange, repositoryPath, selectedPath]);
 
   const selectPath = (path: string, suggestedName: string) => {
     pasteControllerRef.current?.abort();
@@ -184,7 +184,7 @@ export function ProjectForm({
     setValidatingPaste(false);
     setSelectedPath(path);
     setName(suggestedName);
-    setWorkspacePath("");
+    setRepositoryPath("");
     setPasteError(null);
     setPasteOutsideRoots(false);
   };
@@ -507,14 +507,14 @@ export function ProjectForm({
           className={cn(inputClass, "font-mono text-xs")}
           aria-invalid={showPathError || pasteError ? true : undefined}
           aria-describedby={pasteDescribedBy}
-          value={workspacePath}
+          value={repositoryPath}
           onChange={(event) => {
             const nextPath = event.target.value;
-            const currentSuggestedName = projectNameFromPath(normalizedWorkspacePath(workspacePath));
+            const currentSuggestedName = projectNameFromPath(normalizedWorkspacePath(repositoryPath));
             pasteControllerRef.current?.abort();
             pasteControllerRef.current = null;
             setValidatingPaste(false);
-            setWorkspacePath(nextPath);
+            setRepositoryPath(nextPath);
             setSelectedPath(null);
             setPasteError(null);
             setPasteOutsideRoots(false);

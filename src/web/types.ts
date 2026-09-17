@@ -23,13 +23,13 @@ import {
   workItemStageValues,
   workItemStateValues,
   workItemTaskTypeValues,
-  type WorkflowStage,
+  type NodeStage,
 } from "./data/wire";
 import type { TolerantDeclaredChild } from "@shared/task-board-contract/validate";
 
 /* —— View vocabulary and automation policy —— */
 
-export type { ParkCategory, WorkflowStage };
+export type { ParkCategory, NodeStage };
 
 export type AgentStatus = "sleeping" | "queued" | "running" | "interrupting" | "waiting_for_human" | "failed";
 
@@ -51,7 +51,7 @@ export type TaskStatus =
   | "cancelled"
   | typeof unrecognizedState;
 
-export type TaskPhaseStage = (typeof taskPhaseStageValues)[number];
+export type PhaseStep = (typeof taskPhaseStageValues)[number];
 export type TaskPhaseStatus = (typeof taskPhaseStatusValues)[number];
 
 export type QuestionStatus = (typeof questionStatusValues)[number];
@@ -274,7 +274,7 @@ export interface BoardTask {
 export interface BoardTaskPhase {
   id: string;
   title: string;
-  stage: TaskPhaseStage;
+  stage: PhaseStep;
   status: TaskPhaseStatus;
   parallelGroup: string | null;
   orderKey: number;
@@ -373,8 +373,8 @@ export interface WorkflowNode {
   objective: string;
   acceptanceCriteria: string[];
   dependencyNodeIds: string[];
-  stageTemplate: WorkflowStage[];
-  currentStage: WorkflowStage | null;
+  stageTemplate: NodeStage[];
+  currentStage: NodeStage | null;
   state: (typeof workNodeStateValues)[number];
   createdAt: string;
   createdAtMs: number;
@@ -386,7 +386,7 @@ export interface WorkflowHandoff {
   handoffId: string;
   nodeId: string;
   taskId: string;
-  stage: WorkflowStage;
+  stage: NodeStage;
   outcome: (typeof stageHandoffOutcomeValues)[number];
   summary: string;
   evidence: string[];

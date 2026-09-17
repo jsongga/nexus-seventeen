@@ -504,9 +504,9 @@ export class TasksCollaborator {
     }
     if (task.endedAt !== null) throw conflict("TASK_TERMINAL", "Terminal task phases are immutable");
     this.runtime.requireActiveRun(agentId, task.taskId);
-    const stage = request.stage ?? current.stage;
+    const phaseStep = request.stage ?? current.stage;
     const status = request.status ?? current.status;
-    if (stage === "done" && status !== "completed") {
+    if (phaseStep === "done" && status !== "completed") {
       throw new TaskBoardError(
         400,
         "PHASE_STATE_INVALID",
@@ -532,7 +532,7 @@ export class TasksCollaborator {
         )
         .run(
           request.title ?? current.title,
-          stage,
+          phaseStep,
           status,
           "parallelGroup" in request ? (request.parallelGroup ?? null) : current.parallelGroup,
           request.orderKey ?? current.orderKey,
@@ -553,7 +553,7 @@ export class TasksCollaborator {
           phaseId,
           previousVersion: current.version,
           version: nextVersion,
-          stage,
+          stage: phaseStep,
           status,
         },
         now

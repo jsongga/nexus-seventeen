@@ -1,7 +1,7 @@
 import {
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,
-  type TaskPhaseStage,
+  type PhaseStep,
   type TaskPhaseStatus,
 } from "#shared/task-board-contract";
 import { redactRecognizedCredentials, type CredentialRedactionMarkers } from "../../shared/redact.js";
@@ -22,7 +22,7 @@ type JsonObject = Record<string, unknown>;
 export interface LivePhaseSignal {
   readonly key: string;
   readonly title: string;
-  readonly stage: TaskPhaseStage;
+  readonly stage: PhaseStep;
   readonly status: TaskPhaseStatus;
   readonly parallelGroup: string | null;
 }
@@ -267,7 +267,7 @@ export function sanitizeActivity(
 }
 
 /** Maps only fixed, sanitized lifecycle labels to a durable phase stage. */
-export function phaseStageFromActivity(activity: string): Exclude<TaskPhaseStage, "done"> | null {
+export function phaseStageFromActivity(activity: string): Exclude<PhaseStep, "done"> | null {
   switch (activity) {
     case "Agent process started.":
     case "Work started.":

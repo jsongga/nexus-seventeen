@@ -55,7 +55,7 @@ import {
   type TaskStatus,
   type WakeupReason,
   type WorkerConnection,
-  type WorkflowStage,
+  type NodeStage,
 } from "@shared/task-board-contract";
 
 /* —— Wire vocabulary aliases —— */
@@ -69,7 +69,7 @@ export type WireWorkerConnection = WorkerConnection;
 
 // Renamed to the vocabulary the web app already uses.
 export type WakeReason = WakeupReason;
-export type { ParkCategory, WorkflowStage };
+export type { ParkCategory, NodeStage };
 export { isHardTerminalTaskStatus, isRecoverableTaskStatus };
 
 export const apiVersion = TASK_BOARD_API_VERSION;

@@ -3121,7 +3121,7 @@ test("Migrate context attaches only to implementation and fix-round engineer cla
     const claims: Array<Readonly<{ label: string; agentId: string }>> = [];
     const db = new DatabaseSync(fixture.path);
     try {
-      for (const [label, role, stage, attempt] of [
+      for (const [label, role, nodeStage, attempt] of [
         ["verifier", "verifier", "testing", 20],
         ["reviewer", "verifier", "verification", 20],
         ["fix-round", "engineer", "implementation", 20],
@@ -3146,7 +3146,7 @@ test("Migrate context attaches only to implementation and fix-round engineer cla
           `role-scoped-${label}-attempt`,
           node.nodeId,
           task.taskId,
-          stage,
+          nodeStage,
           attempt,
           "{}"
         );

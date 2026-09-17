@@ -32,8 +32,8 @@ export function hostPathError(caught: unknown, fallback: string): string {
   return fallback;
 }
 
-export function taskWorkspaceRefs(workspacePath?: string | null): string[] {
-  const path = workspacePath?.trim();
+export function taskWorkspaceRefs(repositoryPath?: string | null): string[] {
+  const path = repositoryPath?.trim();
   if (!path || path.length > 512 || /[\r\n]/u.test(path)) return [];
   const absolutePosixPath = path.startsWith("/");
   const absoluteWindowsPath = /^[A-Za-z]:[\\/]/u.test(path) || /^\\\\[^\\]+\\[^\\]+/u.test(path);

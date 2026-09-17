@@ -70,7 +70,7 @@ export function ThreadPipelineTable({
           <tbody>
             {tasks.length > 0 ? (
               tasks.map((task) => {
-                const stage = pipelineStageForStatus(task.status);
+                const statusDisplay = pipelineStageForStatus(task.status);
                 return (
                   <tr key={task.id} className="[&:last-child>td]:border-b-0">
                     <td className="border-b border-line py-2.5 align-middle text-[13px]">
@@ -86,8 +86,11 @@ export function ThreadPipelineTable({
                       {task.assignedAgentId ? (agentById.get(task.assignedAgentId)?.name ?? task.assignedAgentId) : "-"}
                     </td>
                     <td className="border-b border-line py-2.5 align-middle text-[13px]">
-                      <Pill className="max-w-full justify-center whitespace-normal text-center" tone={stage.tone}>
-                        {stage.label}
+                      <Pill
+                        className="max-w-full justify-center whitespace-normal text-center"
+                        tone={statusDisplay.tone}
+                      >
+                        {statusDisplay.label}
                       </Pill>
                     </td>
                     <td className="break-words border-b border-line py-2.5 align-middle text-[11px] text-muted">

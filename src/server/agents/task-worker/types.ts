@@ -6,7 +6,7 @@ import {
   type CrossRepoContext,
   type SkillSnapshot,
   type StageHandoff,
-  type WorkflowStage,
+  type NodeStage,
   type StageHandoffDraft,
   type ReviewFindingDraft,
   type DesignRecordDraft,
@@ -15,7 +15,7 @@ import {
   type WorkflowPipelineContext,
   type WorkflowReviewContext,
   type TaskKind,
-  type TaskPhaseStage,
+  type PhaseStep,
   type TaskPhaseStatus,
   type WorkItemPhase,
 } from "#shared/task-board-contract";
@@ -70,7 +70,7 @@ interface BoundedWorkflowReviewContext extends WorkflowReviewContext {
 export interface AgentTaskPhase {
   readonly phaseId: string;
   readonly title: string;
-  readonly stage: TaskPhaseStage;
+  readonly stage: PhaseStep;
   readonly status: TaskPhaseStatus;
   readonly parallelGroup: string | null;
   readonly orderKey: number;
@@ -84,7 +84,7 @@ export interface AgentTaskPhase {
 export interface AgentTaskPhaseUpdate {
   readonly phaseId: string | null;
   readonly title: string;
-  readonly stage: TaskPhaseStage;
+  readonly stage: PhaseStep;
   readonly status: TaskPhaseStatus;
   readonly parallelGroup: string | null;
   readonly orderKey: number;
@@ -162,7 +162,7 @@ export interface BoundedAgentContext {
   readonly workflow: Readonly<{
     planRevisionId: string;
     nodeId: string;
-    stage: WorkflowStage;
+    stage: NodeStage;
     skills: readonly SkillSnapshot[];
     dependencyHandoffs: readonly StageHandoff[];
     readonly workspaceKey?: string | null;
@@ -309,7 +309,7 @@ export interface UpdateTaskEstimateRequest {
 export interface CreateAgentTaskPhaseRequest {
   readonly claim: TaskWakeClaim;
   readonly title: string;
-  readonly stage: TaskPhaseStage;
+  readonly stage: PhaseStep;
   readonly parallelGroup: string | null;
 }
 
@@ -317,7 +317,7 @@ export interface UpdateAgentTaskPhaseRequest {
   readonly claim: TaskWakeClaim;
   readonly phase: AgentTaskPhase;
   readonly title?: string;
-  readonly stage?: TaskPhaseStage;
+  readonly stage?: PhaseStep;
   readonly status?: TaskPhaseStatus;
   readonly parallelGroup?: string | null;
   readonly orderKey?: number;
