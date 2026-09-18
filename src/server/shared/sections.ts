@@ -1,3 +1,5 @@
+/** Parses strict named Markdown sections shared by the prompt and task-board skill registries. */
+
 const SECTION_NAME = /^[a-z0-9][a-z0-9-]*$/u;
 
 export interface ParseSectionsOptions {

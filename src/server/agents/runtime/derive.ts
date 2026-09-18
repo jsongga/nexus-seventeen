@@ -1,3 +1,5 @@
+/** Turns runtime events into bounded activity, estimates, and phase signals the task worker can persist. */
+
 import {
   TASK_PHASE_STAGES,
   TASK_PHASE_STATUSES,

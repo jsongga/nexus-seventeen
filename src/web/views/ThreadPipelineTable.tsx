@@ -1,3 +1,5 @@
+/** Gives ProjectPage a compact, navigable table of the project's current task pipeline. */
+
 import { Pill } from "../components/ui";
 import { formatShortDateTime } from "../data/date-format";
 import type { BoardAgent, BoardTask, TaskStatus } from "../types";

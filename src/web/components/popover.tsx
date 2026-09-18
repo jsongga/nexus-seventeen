@@ -1,3 +1,5 @@
+/** Gives the sidebar's pause control an anchored, viewport-aware dialog with dismissal and focus restoration. */
+
 import {
   useEffect,
   useLayoutEffect,

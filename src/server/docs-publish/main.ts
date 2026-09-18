@@ -1,3 +1,5 @@
+/** Runs selected repository mirrors against Outline or a no-write dry-run sink and reports each reconciliation. */
+
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { DocsPublishConfig, DocsPublishRepo } from "./config.js";

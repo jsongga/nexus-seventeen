@@ -1,3 +1,5 @@
+/** Gives board mutations stable error contexts, race-safe reducers, and operator-facing messages for transport failures. */
+
 import { useCallback, useReducer } from "react";
 import { BoardApiError } from "../data/client";
 

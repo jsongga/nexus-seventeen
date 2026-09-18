@@ -1,3 +1,5 @@
+/** Marks every mirrored page with immutable repository provenance and directs edits back to its source. */
+
 import type { DocSource } from "./enumerate.js";
 
 export function withSourceBanner(source: DocSource, repoName: string): string {

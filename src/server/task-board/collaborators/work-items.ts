@@ -1,3 +1,5 @@
+/** Owns the request lifecycle from intake planning through decomposition, approval, deployment gates, closure, and audit. */
+
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {

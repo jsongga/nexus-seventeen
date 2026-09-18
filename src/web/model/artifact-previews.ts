@@ -1,3 +1,5 @@
+/** Lets ProjectPage load artifact previews independently while revoking every object URL when the view changes. */
+
 interface ArtifactPreviewLoad {
   readonly done: Promise<void>;
   dispose(): void;

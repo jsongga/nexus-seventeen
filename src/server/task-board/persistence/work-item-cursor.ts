@@ -1,3 +1,5 @@
+/** Encodes and strictly validates canonical keyset cursors for stable work-item pagination. */
+
 import { IDENTIFIER_PATTERN, WORK_ITEM_CURSOR_MAX_BYTES, WORK_ITEM_PRIORITIES } from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
 import { TaskBoardError } from "../errors.js";

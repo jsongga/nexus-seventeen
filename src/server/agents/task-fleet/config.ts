@@ -1,3 +1,5 @@
+/** Validates the fleet file that binds each durable agent identity to one worker lane and launch mode. */
+
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute } from "node:path";

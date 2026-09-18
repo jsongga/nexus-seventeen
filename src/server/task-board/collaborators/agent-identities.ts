@@ -1,3 +1,5 @@
+/** Creates explicit or lazy agent identities with unique credentials inside their caller's board transaction. */
+
 import { randomBytes } from "node:crypto";
 import type { AgentProfile, AgentRole, AutomationAgentType } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";

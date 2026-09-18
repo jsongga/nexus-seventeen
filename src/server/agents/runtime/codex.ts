@@ -1,3 +1,5 @@
+/** Adapts Codex arguments, JSONL events, environment, and final output to the task-worker runtime contract. */
+
 import type { AgentRole } from "#shared/task-board-contract";
 import type { ProviderArgumentOptions } from "../task-worker/agent-envelope.js";
 import { AgentProcessError, type RuntimeAdapter, type RuntimeEvent } from "./adapter.js";

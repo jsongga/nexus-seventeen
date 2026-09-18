@@ -1,3 +1,5 @@
+/** Projects the board's flat work-item snapshot into the parent-child rows and dependency hints rendered by BoardApp. */
+
 import type { BoardWorkItem } from "../types";
 
 export interface WorkItemTreeRow {

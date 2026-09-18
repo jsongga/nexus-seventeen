@@ -1,3 +1,5 @@
+/** Drives one durable claim from validation through agent launch, live activity, output append, and idempotent settlement. */
+
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import {

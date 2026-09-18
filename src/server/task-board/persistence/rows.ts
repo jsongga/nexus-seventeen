@@ -1,3 +1,5 @@
+/** Converts raw SQLite rows into validated task-board entities at the persistence boundary. */
+
 import type { SQLOutputValue } from "node:sqlite";
 import {
   TASK_BOARD_API_VERSION,

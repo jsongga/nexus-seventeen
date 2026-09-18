@@ -1,3 +1,5 @@
+/** Preserves TaskDetail answer and rationale drafts across polling while resetting them when navigation selects another task. */
+
 export interface TaskDetailDraftState {
   taskId: string;
   answer: string;

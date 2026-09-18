@@ -1,3 +1,5 @@
+/** Persists private atomic claim checkpoints so a task worker can replay or settle safely after a crash. */
+
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises";

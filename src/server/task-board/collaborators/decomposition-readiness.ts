@@ -1,3 +1,5 @@
+/** Enforces sibling, deployment, and published-interface prerequisites before decomposed work may advance. */
+
 import type { DatabaseSync } from "node:sqlite";
 import type {
   AgentRole,

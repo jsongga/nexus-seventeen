@@ -1,3 +1,5 @@
+/** Notifies operators about aged parks and auto-abandons work that exceeds the configured park deadline. */
+
 import type { ParkCategory, WorkItemState } from "#shared/task-board-contract";
 import type { Row } from "../persistence/rows.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";

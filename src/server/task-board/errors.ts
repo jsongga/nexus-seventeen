@@ -1,3 +1,5 @@
+/** Carries stable HTTP status and error codes from board domain checks to the transport boundary. */
+
 export class TaskBoardError extends Error {
   constructor(
     readonly status: number,

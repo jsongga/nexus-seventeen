@@ -1,3 +1,5 @@
+/** Renders ProjectPage's chronological agent updates and opens any attached visual or document artifacts. */
+
 import { FileText } from "lucide-react";
 import { formatShortDateTime } from "../data/date-format";
 

@@ -1,3 +1,5 @@
+/** Renders ProjectPage's important context links with accessible reordering persisted per project. */
+
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "../components/ui";

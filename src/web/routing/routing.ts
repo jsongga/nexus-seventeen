@@ -1,3 +1,5 @@
+/** Defines the task board's hash-route grammar, canonical URLs, and fallbacks when snapshot entities disappear. */
+
 /* —— Route shape —— */
 
 export type BoardPage =

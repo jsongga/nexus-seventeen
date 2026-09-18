@@ -1,3 +1,5 @@
+/** Starts the configured multi-agent fleet and shuts every lane down cleanly on process signals. */
+
 import { resolve } from "node:path";
 import { loadTaskFleetConfig } from "./config.js";
 import { TaskFleet } from "./fleet.js";

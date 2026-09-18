@@ -1,3 +1,5 @@
+/** Defines the lane configuration, lifecycle snapshots, events, and worker seams shared by fleet supervision and construction. */
+
 import type { AgentRole } from "#shared/task-board-contract";
 
 export type TaskFleetRuntime = string;

@@ -1,3 +1,5 @@
+/** Projects durable review findings and park records into the aggregate ledgers served to operators. */
+
 import {
   type FindingsLedger,
   type ParkRecord,

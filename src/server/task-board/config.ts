@@ -1,3 +1,5 @@
+/** Normalizes task-board storage, authentication, host browsing, listening, and lifecycle timing options into safe defaults. */
+
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { IDENTIFIER_PATTERN } from "#shared/task-board-contract";

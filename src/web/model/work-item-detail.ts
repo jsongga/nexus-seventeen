@@ -1,3 +1,5 @@
+/** Derives WorkItemDetail actions, decomposition readiness, proposed-plan rows, and review evidence from board state. */
+
 import type { PipelineSummary, PlanRecordFields, PlanRevision, ReviewFinding } from "@shared/task-board-contract";
 import type {
   BoardChildWorkItem,

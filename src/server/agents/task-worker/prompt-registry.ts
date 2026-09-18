@@ -1,3 +1,5 @@
+/** Loads version-pinned prompt templates from named Markdown sections and renders their bounded placeholders. */
+
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";

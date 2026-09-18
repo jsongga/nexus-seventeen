@@ -1,3 +1,5 @@
+/** Resolves configured runtime names to the Claude or Codex adapter used by task-worker launchers. */
+
 import type { RuntimeAdapter } from "./adapter.js";
 import { claudeAdapter } from "./claude.js";
 import { codexAdapter } from "./codex.js";

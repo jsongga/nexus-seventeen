@@ -1,3 +1,5 @@
+/** Verifies that an onboarding branch contains the repository documents, ADR, workflow policy, and agent-image target it promised. */
+
 import { defaultGitRunner, runGit, type GitTextRunner } from "../../shared/git.js";
 import { parseVerifyContract } from "../../agents/verify/contract.js";
 const REQUIRED_FILES = Object.freeze([

@@ -1,3 +1,5 @@
+/** Serializes BoardApp refreshes, bounds connectivity waits, and waits for React to commit the requested snapshot. */
+
 export type BoardRefreshKind = "foreground" | "poll" | "mutation";
 
 type RefreshOperation = (kind: BoardRefreshKind, signal: AbortSignal) => Promise<boolean>;

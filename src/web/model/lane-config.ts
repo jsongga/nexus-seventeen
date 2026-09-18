@@ -1,3 +1,5 @@
+/** Builds AgentPage's copyable fleet-lane configuration while revealing a credential only immediately after rotation. */
+
 import type { BoardAgent } from "../types";
 
 export const MASKED_LANE_TOKEN = "<rotate token to reveal>";

@@ -1,3 +1,5 @@
+/** Derives message cursors and canonical request hashes that make agent-run claiming safely idempotent. */
+
 import type { ClaimRunRequest } from "#shared/task-board-contract";
 import { sha256 } from "../canonical.js";
 

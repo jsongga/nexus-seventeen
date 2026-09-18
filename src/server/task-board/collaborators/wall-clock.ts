@@ -1,3 +1,5 @@
+/** Suspends active runs and parks work items when configured stage or task wall-clock caps are exceeded. */
+
 import type { WorkItemStage, WorkItemState } from "#shared/task-board-contract";
 import type { Row } from "../persistence/rows.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";

@@ -1,3 +1,5 @@
+/** Persists the operator's board-wide pause that prevents agents from claiming new runs. */
+
 import { TASK_BOARD_ERROR_CODES, type BoardPause } from "#shared/task-board-contract";
 import { parseBoardPause } from "#shared/task-board-contract/validate";
 import { redactForPersistence } from "../../shared/redact.js";

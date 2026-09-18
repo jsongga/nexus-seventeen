@@ -1,3 +1,5 @@
+/** Derives agent focus, connection wording, project resources, and activity updates for the workspace pages. */
+
 import type {
   AgentStatus,
   AgentWorkerConnection,

@@ -1,3 +1,5 @@
+/** Starts the allowlisted CONNECT proxy that gives isolated agent containers their only route to external hosts. */
+
 import { startEgressProxy } from "./proxy.js";
 
 const hosts = (process.env.STEWARD_EGRESS_ALLOWED_HOSTS ?? "")

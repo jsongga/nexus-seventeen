@@ -1,3 +1,5 @@
+/** Reads and caches a bounded docs/interface.md from an exact provider commit for cross-repository agent context. */
+
 import {
   GIT_OBJECT_ID_PATTERN,
   isValidCrossRepoMarkdown,

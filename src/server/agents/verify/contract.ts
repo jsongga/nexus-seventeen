@@ -1,3 +1,5 @@
+/** Parses the fenced verification policy in docs/workflow.md so changed files can select the required checks. */
+
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 

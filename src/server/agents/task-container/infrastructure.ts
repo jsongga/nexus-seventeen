@@ -1,3 +1,5 @@
+/** Prepares the isolated agent network, shared egress proxy, and orphan cleanup required before container-mode lanes start. */
+
 import { execFile } from "node:child_process";
 
 const DOCKER_TIMEOUT_MS = 30_000;

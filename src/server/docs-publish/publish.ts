@@ -1,3 +1,5 @@
+/** Reconciles one repository's immutable Markdown sources with its destination collection and archives stale mirrors. */
+
 import { withSourceBanner } from "./banner.js";
 import { OutlineHttpError } from "./client.js";
 import type { DocsPublishRepo } from "./config.js";

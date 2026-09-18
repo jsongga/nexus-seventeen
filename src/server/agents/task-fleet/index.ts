@@ -1,3 +1,5 @@
+/** Exposes fleet configuration, worker construction, supervision, and lane contracts to runtime entry points. */
+
 export { loadTaskFleetConfig, parseTaskFleetConfig, type TaskFleetConfigWarning } from "./config.js";
 export {
   captureContainerRuntimeVersion,

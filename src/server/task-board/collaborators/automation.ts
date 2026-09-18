@@ -1,3 +1,5 @@
+/** Reads and atomically replaces the dormant, versioned automation policy edited by board operators. */
+
 import type { AutomationConfiguration, UpdateAutomationConfigurationRequest } from "#shared/task-board-contract";
 import { canonicalJson } from "../canonical.js";
 import { conflict } from "../errors.js";

@@ -1,3 +1,5 @@
+/** Implements the worker-side task-board protocol for claims, heartbeats, activity, outputs, and idempotent settlement. */
+
 import { TASK_BOARD_API_VERSION, TASK_BOARD_ERROR_CODES, type RunStatus } from "#shared/task-board-contract";
 import {
   boundedClaimText as bounded,

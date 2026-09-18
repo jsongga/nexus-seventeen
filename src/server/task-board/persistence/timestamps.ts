@@ -1,3 +1,5 @@
+/** Centralizes exact ISO timestamps and expected-completion calculations for persisted board records. */
+
 import type { TaskStatus } from "#shared/task-board-contract";
 
 export function exactNow(now: () => Date): string {

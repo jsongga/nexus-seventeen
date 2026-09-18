@@ -1,3 +1,5 @@
+/** Defines the claims, bounded model context, launch handles, board client, diagnostics, and journal shared by a task worker. */
+
 import {
   WAKEUP_REASONS,
   type AgentRole,

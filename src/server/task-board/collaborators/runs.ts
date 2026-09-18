@@ -1,3 +1,5 @@
+/** Owns agent-run claiming, heartbeats, interruption, and settlement, including the workflow transitions a result may trigger. */
+
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import {

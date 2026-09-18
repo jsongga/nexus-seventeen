@@ -1,3 +1,5 @@
+/** Wraps any agent launcher with a per-task Git workspace and harvest-or-retain cleanup policy. */
+
 import type {
   AgentLauncher,
   AgentLaunchRequest,

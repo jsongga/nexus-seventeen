@@ -1,3 +1,5 @@
+/** Implements the host-and-port allowlisted CONNECT tunnel used to constrain agent-container egress. */
+
 import { createServer } from "node:http";
 import { connect } from "node:net";
 

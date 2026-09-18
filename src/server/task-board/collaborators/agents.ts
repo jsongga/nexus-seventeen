@@ -1,3 +1,5 @@
+/** Handles operator-facing agent creation, credential rotation, and lane-error state while coordinating affected work. */
+
 import {
   TASK_BOARD_ERROR_CODES,
   type AgentProfile,

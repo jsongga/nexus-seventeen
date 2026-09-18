@@ -1,3 +1,5 @@
+/** Keeps BoardApp navigation synchronized with browser hash history through push and replace transitions. */
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { hashToPage, pageToHash, type BoardPage } from "./routing";
 

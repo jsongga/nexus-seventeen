@@ -1,3 +1,5 @@
+/** Gives ProjectPage its consistent workspace title, eyebrow, and action area. */
+
 import type { ReactNode } from "react";
 
 export function WorkspaceHeader({ eyebrow, title, actions }: { eyebrow: string; title: string; actions?: ReactNode }) {

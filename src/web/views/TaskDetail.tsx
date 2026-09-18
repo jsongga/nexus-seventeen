@@ -1,3 +1,5 @@
+/** Renders one task's phases, runs, questions, assignment, interruption, human check, and recovery controls. */
+
 import { Activity, ArrowLeft, CheckCircle2, CircleAlert, HelpCircle, Send, Square, UserRoundCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type Dispatch } from "react";
 import { Button, Card, FieldLabel, InlineActionErrors, Pill, cn, inputClass } from "../components/ui";

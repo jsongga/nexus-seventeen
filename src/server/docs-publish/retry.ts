@@ -1,3 +1,5 @@
+/** Retries only transport, timeout, rate-limit, and server failures from Outline mutations. */
+
 import { OutlineHttpError } from "./client.js";
 
 interface RetryOptions {

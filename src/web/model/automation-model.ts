@@ -1,3 +1,5 @@
+/** Protects AutomationPage drafts from remote refreshes and rejects completions from superseded client operations. */
+
 import type { AutomationConfiguration } from "../types";
 
 interface ClientOperationToken<T extends object> {

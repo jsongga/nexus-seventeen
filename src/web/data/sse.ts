@@ -1,3 +1,5 @@
+/** Frames bounded server-sent-event chunks for the browser client's resumable project update streams. */
+
 export interface SseEvent {
   event: string;
   id: string | null;

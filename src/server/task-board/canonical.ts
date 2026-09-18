@@ -1,3 +1,5 @@
+/** Centralizes stable JSON hashing and constant-time credential comparison for board idempotency and authentication. */
+
 import { createHash, timingSafeEqual } from "node:crypto";
 
 export function canonicalJson(value: unknown): string {

@@ -1,3 +1,5 @@
+/** Creates isolated task branches in disposable clones, harvests successful commits, and retains failed or dirty workspaces. */
+
 import { execFile } from "node:child_process";
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";

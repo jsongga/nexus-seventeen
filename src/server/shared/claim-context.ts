@@ -1,3 +1,5 @@
+/** Projects a board claim into the validated, bounded context that may cross into an agent model process. */
+
 import {
   MAX_AREA_MEMORY_RESULT_CHARACTERS,
   MAX_INTERNAL_TASK_OBJECTIVE_CHARACTERS,

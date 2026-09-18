@@ -1,3 +1,5 @@
+/** Provides the fast, area, full, status, tail, and list commands for repository verification runs. */
+
 import { VerifyRunner } from "./runner.js";
 import type { VerifyTier } from "./mapping.js";
 

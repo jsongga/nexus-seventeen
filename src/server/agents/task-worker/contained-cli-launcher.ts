@@ -1,3 +1,5 @@
+/** Runs one agent CLI as a bounded local POSIX process group whose descendants can be confirmed terminated. */
+
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";

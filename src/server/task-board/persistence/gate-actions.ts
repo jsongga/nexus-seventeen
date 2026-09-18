@@ -1,3 +1,5 @@
+/** Appends validated, redacted evidence for human and deployment gates inside the caller's board transaction. */
+
 import { randomUUID } from "node:crypto";
 import type { GateAction } from "#shared/task-board-contract";
 import { parseGateAction } from "#shared/task-board-contract/validate";

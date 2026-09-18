@@ -1,3 +1,5 @@
+/** Records human and agent messages or questions and performs the wake transitions their delivery permits. */
+
 import { randomUUID } from "node:crypto";
 import {
   TASK_MESSAGE_PAGE_SIZE,

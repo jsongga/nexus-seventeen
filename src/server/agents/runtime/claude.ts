@@ -1,3 +1,5 @@
+/** Adapts Claude Code arguments, stream events, environment, and final output to the task-worker runtime contract. */
+
 import type { AgentRole } from "#shared/task-board-contract";
 import { RESULT_SCHEMA, type ProviderArgumentOptions } from "../task-worker/agent-envelope.js";
 import { AgentProcessError, type RuntimeAdapter, type RuntimeEvent } from "./adapter.js";

@@ -1,3 +1,5 @@
+/** Gives board dialogs shared focus trapping, layer ordering, scroll locking, trigger routing, and dirty-close confirmation. */
+
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 
 type DialogDismissalDecision = "close" | "confirm";

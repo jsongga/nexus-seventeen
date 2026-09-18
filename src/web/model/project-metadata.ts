@@ -1,3 +1,5 @@
+/** Turns legacy free-form project descriptions into safe summaries, workspace paths, and external links for workspace views. */
+
 type ProjectMetadataKind = "workspace" | "github" | "dokploy" | "live" | "docs" | "other";
 
 export interface ProjectMetadataEntry {

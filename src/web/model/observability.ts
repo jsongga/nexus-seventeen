@@ -1,3 +1,5 @@
+/** Produces nonnegative elapsed times and compact duration labels shared by list, ledger, and audit views. */
+
 export function elapsedMilliseconds(startMs: number, endMs: number): number {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
   return Math.max(0, endMs - startMs);

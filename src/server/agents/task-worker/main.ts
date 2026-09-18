@@ -1,3 +1,5 @@
+/** Starts one environment-configured local-process task worker for deployments that do not use the fleet entry point. */
+
 import { resolve } from "node:path";
 import { loadRuntimeProfiles } from "../runtime/profiles.js";
 import { defaultRuntimeRegistry } from "../runtime/registry.js";

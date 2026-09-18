@@ -1,3 +1,5 @@
+/** Loads the repository, exclusion, and Outline destination policy for one documentation publication run. */
+
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { validateExcludePattern } from "./exclude.js";

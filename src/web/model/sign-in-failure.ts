@@ -1,3 +1,5 @@
+/** Tells BoardApp whether staff SSO expired and can be retried or the signed-in account lacks operator access. */
+
 import { BoardApiError } from "../data/client";
 
 /**

@@ -1,3 +1,5 @@
+/** Supplies bounded JSON, bearer authentication, CORS, and redacted response helpers for TaskBoardService routes. */
+
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { redactForPersistence, redactMultilineForPersistence, safeErrorDetail } from "../shared/redact.js";
 import { sha256, tokenMatches } from "./canonical.js";

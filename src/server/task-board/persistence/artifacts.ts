@@ -1,3 +1,5 @@
+/** Stores validated project artifact bytes on disk while keeping their provenance and digest metadata in SQLite. */
+
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";

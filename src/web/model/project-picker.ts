@@ -1,3 +1,5 @@
+/** Prepares host-discovered repositories, duplicate markers, filters, and breadcrumbs for the create-project picker. */
+
 import { parseProjectMetadata } from "./project-metadata";
 import type { BoardProject, HostProjectRoot } from "../types";
 

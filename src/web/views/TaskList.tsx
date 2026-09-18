@@ -1,3 +1,5 @@
+/** Supplies BoardApp's selectable request and task rows plus their empty, removed, validation, and error states. */
+
 import { Activity, Check, ChevronRight, CircleAlert, HelpCircle } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button, Card, Pill, Toast, cn } from "../components/ui";

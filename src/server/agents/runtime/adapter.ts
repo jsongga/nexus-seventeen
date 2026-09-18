@@ -1,3 +1,5 @@
+/** Defines the provider-neutral process contract that lets task launchers run and observe different agent CLIs. */
+
 import type { AgentRole } from "#shared/task-board-contract";
 import type { CredentialPatternName } from "../../shared/redact.js";
 import type { ProviderArgumentOptions } from "../task-worker/agent-envelope.js";

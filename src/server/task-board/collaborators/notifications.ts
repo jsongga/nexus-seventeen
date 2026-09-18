@@ -1,3 +1,5 @@
+/** Inserts deduplicated durable notifications transactionally, delivers them after commit, and tracks operator reads. */
+
 import { randomUUID } from "node:crypto";
 import { TASK_BOARD_ERROR_CODES, type BoardNotification } from "#shared/task-board-contract";
 import { parseBoardNotification } from "#shared/task-board-contract/validate";

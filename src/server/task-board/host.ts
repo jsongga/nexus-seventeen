@@ -1,3 +1,5 @@
+/** Lets the project picker browse readable Git directories without escaping the task board's configured host roots. */
+
 import { access, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { TASK_BOARD_ERROR_CODES } from "#shared/task-board-contract";

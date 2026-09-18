@@ -1,3 +1,5 @@
+/** Exposes the in-process board, HTTP service, configuration, skills, and shared contract as one server package. */
+
 export { TaskBoard } from "./board.js";
 export type { TaskBoardDependencies } from "./board.js";
 export { normalizeTaskBoardConfig } from "./config.js";

@@ -1,3 +1,5 @@
+/** Derives the source-content tag used to identify the local agent image expected by container-mode fleet lanes. */
+
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";

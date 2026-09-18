@@ -1,3 +1,5 @@
+/** Exposes the worker state machine, board client, launchers, prompts, and contracts used by the fleet worker factory. */
+
 export { TaskWorker } from "./worker.js";
 export { HttpTaskBoardClient, RetryableSettlementError, TaskBoardHttpError } from "./http-board-client.js";
 export { AgentProcessError } from "../runtime/adapter.js";

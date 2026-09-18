@@ -1,3 +1,5 @@
+/** Runs targeted checks in the foreground and manages detached full-check logs and status records. */
+
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, statSync } from "node:fs";

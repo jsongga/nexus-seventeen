@@ -1,3 +1,5 @@
+/** Reads README.md and docs Markdown from one immutable Git tree without checking out the configured ref. */
+
 import { defaultGitRunner, parseGitTreeEntry, runGit, type GitTextRunner } from "../shared/git.js";
 import { validateExcludePattern } from "./exclude.js";
 

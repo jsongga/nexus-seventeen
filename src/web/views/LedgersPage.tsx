@@ -1,3 +1,5 @@
+/** Loads and renders the operator's aggregate review-finding and parked-work ledgers with independent recovery states. */
+
 import { CircleAlert, CirclePause, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button, Card, Pill } from "../components/ui";

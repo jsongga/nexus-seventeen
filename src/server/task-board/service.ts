@@ -1,3 +1,5 @@
+/** Exposes TaskBoard through authenticated HTTP routes and resumable project event streams while scheduling reconciliation sweeps. */
+
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {

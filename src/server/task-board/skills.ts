@@ -1,3 +1,5 @@
+/** Loads selected skill snapshots from a bounded Markdown registry so claims can pin the instructions agents receive. */
+
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";

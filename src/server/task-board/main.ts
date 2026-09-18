@@ -1,3 +1,5 @@
+/** Starts the loopback task-board service from environment configuration and closes it on process signals. */
+
 import { createTaskBoardService } from "./service.js";
 
 function required(name: string): string {

@@ -1,3 +1,5 @@
+/** Loads the capability profiles that constrain which binaries, roles, sandboxes, and tools task launchers may use. */
+
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { AGENT_ROLES, IDENTIFIER_PATTERN, type AgentRole } from "#shared/task-board-contract";

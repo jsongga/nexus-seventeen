@@ -1,3 +1,5 @@
+/** Restricts documentation exclusions to literal repository prefixes using the publisher's small <prefix>/** dialect. */
+
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
 const GLOB_CHARACTER = /[*?[\]{}()!\\]/u;
 

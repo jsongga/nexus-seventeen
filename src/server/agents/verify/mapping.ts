@@ -1,3 +1,5 @@
+/** Maps changed source paths through the repository verification policy to targeted tests or explicit escalation reasons. */
+
 import { posix } from "node:path";
 
 import type { VerifyRule } from "./contract.js";

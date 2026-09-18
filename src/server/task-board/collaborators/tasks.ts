@@ -1,3 +1,5 @@
+/** Applies durable task commands for creation, assignment, retry, backlog recovery, and agent-reported phase progress. */
+
 import { randomUUID } from "node:crypto";
 import type {
   BacklogTaskRequest,

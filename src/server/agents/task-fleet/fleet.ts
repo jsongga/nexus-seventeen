@@ -1,3 +1,5 @@
+/** Supervises one task-worker loop per configured agent, retrying transient failures and quarantining poisoned claims. */
+
 import { safeErrorDetail } from "../../shared/redact.js";
 import { RuntimeCapabilityError } from "../runtime/profiles.js";
 import type {

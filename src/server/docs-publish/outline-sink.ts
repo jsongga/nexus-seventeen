@@ -1,3 +1,5 @@
+/** Adapts the documentation sink contract to paginated, retried, and idempotent Outline API operations. */
+
 import { OutlineClient, OutlineHttpError, type OutlineClientOptions } from "./client.js";
 import { isDocSourcePath } from "./enumerate.js";
 import { OUTLINE_RETRY_OPTIONS, type RetrySleeper, withRetry } from "./retry.js";

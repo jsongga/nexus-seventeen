@@ -1,3 +1,5 @@
+/** Derives the safe TaskDetail actions and agent selection available for each live or recoverable task state. */
+
 import { isHardTerminalTaskStatus, isRecoverableTaskStatus, rawTaskStatuses, type WireTaskStatus } from "../data/wire";
 import type { TaskKind, TaskStatus } from "../types";
 

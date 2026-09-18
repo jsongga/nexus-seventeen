@@ -1,3 +1,5 @@
+/** Reads the task, new messages, cursor, and intake flag shared by live claims and readiness previews. */
+
 import type { BoardTask, TaskMessage } from "#shared/task-board-contract";
 import { messageFromRow } from "../persistence/rows.js";
 import type { TaskBoardRuntime } from "./board-runtime.js";

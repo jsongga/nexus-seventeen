@@ -1,3 +1,5 @@
+/** Runs one agent task in a disposable Docker container on the isolated network prepared for container-mode fleet lanes. */
+
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";

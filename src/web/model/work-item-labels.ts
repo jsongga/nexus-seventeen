@@ -1,3 +1,5 @@
+/** Keeps operator-facing labels and color tones consistent for work-item, task, phase, park, and notification states. */
+
 import type { NOTIFICATION_KINDS, ParkCategory } from "@shared/task-board-contract";
 import type { BoardWorkItem, TaskStatus, WorkItemStage, WorkItemState } from "../types";
 

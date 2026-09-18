@@ -1,3 +1,5 @@
+/** Coalesces snapshot-triggered notification reads and keeps stale completions out of the board notification state. */
+
 type NotificationLoad = (token: number) => Promise<void>;
 
 /** Coalesces snapshot-driven reads while rejecting completions from older requests. */

@@ -1,3 +1,5 @@
+/** Provides the bounded authenticated Outline POST client used by OutlineSink. */
+
 export class OutlineHttpError extends Error {
   constructor(
     message: string,

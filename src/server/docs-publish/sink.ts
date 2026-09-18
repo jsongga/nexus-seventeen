@@ -1,3 +1,5 @@
+/** Decouples Git-to-document reconciliation from Outline, dry-run, and test storage implementations. */
+
 export interface SinkCollection {
   readonly id: string;
   readonly name: string;

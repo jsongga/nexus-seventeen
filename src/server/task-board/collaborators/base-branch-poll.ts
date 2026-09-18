@@ -1,3 +1,5 @@
+/** Withdraws or parks final approvals when their pipeline base branch advances or rewrites underneath them. */
+
 import type { Row } from "../persistence/rows.js";
 import { WORK_ITEM_REPOSITORY_PATH_SQL } from "../persistence/repository-path.js";
 import { exactIsoTimestamp } from "../persistence/timestamps.js";
