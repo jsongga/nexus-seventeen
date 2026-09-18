@@ -7,6 +7,9 @@
     "tsBuildInfoFile": ".test-dist/.tsbuildinfo",
     "paths": {},
     "declaration": false,
+    // Inherited from tsconfig.runtime.json, where it exists so editors can jump from a
+    // `#server/*` symbol to its source. Test output ships no declarations, so it must be off here.
+    "declarationMap": false,
     "sourceMap": false,
     "noEmit": false
   },

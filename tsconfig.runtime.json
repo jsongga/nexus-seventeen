@@ -20,6 +20,9 @@
     "incremental": true,
     "tsBuildInfoFile": "build/.tsbuildinfo",
     "declaration": true,
+    // Without this, `#server/*` and `#shared/*` resolve to build/*.d.ts and go-to-declaration
+    // strands the reader in generated output. The map lets an editor hop through to the source.
+    "declarationMap": true,
     "sourceMap": true,
     "strict": true,
     "skipLibCheck": true,
